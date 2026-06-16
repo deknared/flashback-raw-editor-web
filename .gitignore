@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build output (Cloudflare Pages builds this from source)
+dist/
+
+# Local deploy artifacts
+*.zip
+
+# Personal test DNGs (not needed for the build; keep camera files out of git)
+test-assets/
+
+# Local agent / editor tooling
+.claude/
+
+# Vite cache
+.vite/
+
+# OS cruft
+.DS_Store
+Thumbs.db
+*.local

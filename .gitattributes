@@ -1,0 +1,11 @@
+# Normalize line endings to LF in the repo (avoids CRLF churn on Windows).
+* text=auto eol=lf
+
+# Treat large/encoded assets as binary (no EOL processing or diffs).
+*.cube binary
+*.wasm binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.dng binary

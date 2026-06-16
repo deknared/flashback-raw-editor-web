@@ -1,0 +1,1461 @@
+/* ============================================================
+   Flashback RAW Editor — Dark theme, mobile-first
+   All layout uses safe-area-inset for iPhone notch / home bar
+   ============================================================ */
+
+/* ── Design tokens ────────────────────────────────────────── */
+:root {
+  --bg:           #0d0d0d;
+  --surface:      #1a1a1a;
+  --surface-hi:   #222222;
+  --border:       #2c2c2c;
+  --accent:       #ed7c39;
+  --accent-dim:   rgba(237, 124, 57, 0.18);
+  --accent-glow:  rgba(237, 124, 57, 0.08);
+  --text:         #e4e4e4;
+  --text-dim:     #888;
+  --text-faint:   #444;
+  --slider-track: #2a2a2a;
+  --slider-fill:  #ed7c39;
+  --danger:       #e06c75;
+
+  --radius-sm:    6px;
+  --radius:       10px;
+  --radius-lg:    16px;
+  --radius-pill:  999px;
+
+  --header-h:     54px;
+  --controls-pad: 12px;
+
+  /* Safe-area helpers — fall back to 0 on non-notch devices */
+  --sat: env(safe-area-inset-top,    0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left,   0px);
+  --sar: env(safe-area-inset-right,  0px);
+
+  /* Font */
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', sans-serif;
+  --font-mono: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+}
+
+/* ── Reset ────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.4;
+  /* Prevent text size change on orientation change (iOS) */
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+  /* No long-press callout / selection magnifier — keeps the hold-to-compare and
+     long-press-to-delete gestures clean on iOS. Help text stays selectable below. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  /* Kill the browser's double-tap-to-zoom on the page chrome (the photo has
+     its own pinch handlers; this only stops accidental page zoom). */
+  touch-action: manipulation;
+}
+
+/* Snappier taps (no synthetic double-tap-zoom delay) on all buttons. */
+button { touch-action: manipulation; }
+
+/* Allow selecting help text. */
+.sheet-body { -webkit-user-select: text; user-select: text; }
+
+/* ── App container ────────────────────────────────────────── */
+/* Column layout: top bar / photo / file row / controls each own their slice
+   of the screen — the photo is letterboxed into ITS region and is never
+   covered by persistent UI. 100dvh tracks the real dynamic viewport on iOS
+   so no dead band is left at the bottom. */
+#app {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Canvas (the photo region) ────────────────────────────── */
+#preview-canvas {
+  flex: 1 1 auto;
+  min-height: 0;          /* let it shrink inside the flex column */
+  width: 100%;
+  background: #000;
+  touch-action: none;     /* we handle gestures ourselves */
+  order: 1;
+}
+
+/* ── File info row (full filename + photo position) ───────── */
+#file-info {
+  order: 2;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px calc(var(--controls-pad) + var(--sar)) 5px calc(var(--controls-pad) + var(--sal));
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+#file-pos {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Utility ──────────────────────────────────────────────── */
+.hidden { display: none !important; }
+
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  EMPTY STATE                                             ║
+   ╚══════════════════════════════════════════════════════════╝ */
+#empty-state {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 32px;
+  padding-top: calc(32px + var(--sat));
+  padding-bottom: calc(32px + var(--sab));
+  background: var(--bg);
+  z-index: 10;
+  text-align: center;
+}
+
+.empty-icon {
+  width: 72px;
+  height: 72px;
+  color: var(--accent);
+  margin-bottom: 8px;
+  opacity: 0.85;
+}
+.empty-icon svg { width: 100%; height: 100%; }
+
+#empty-state h1 {
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+  color: var(--text);
+}
+
+#empty-state > p {
+  font-size: 15px;
+  color: var(--text-dim);
+  margin-top: -4px;
+}
+
+.empty-hint {
+  font-size: 12px !important;
+  color: var(--text-faint) !important;
+  margin-top: 16px !important;
+  line-height: 1.6;
+}
+
+/* Build stamp — confirms which deploy is installed. Deliberately faint. */
+.version-row {
+  margin-top: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.version-tag {
+  font-size: 8.25px !important;     /* 0.75× of the old 11px */
+  color: #ffd23d !important;        /* yellow — easy to read at a glance */
+  opacity: 0.9;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.version-reload {
+  font-size: 11px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--accent-dim);
+  border-radius: 999px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.version-reload:active, .version-reload:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  LOADING OVERLAY                                         ║
+   ╚══════════════════════════════════════════════════════════╝ */
+#loading-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: rgba(0,0,0,0.75);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 100;
+}
+
+#loading-text {
+  font-size: 13px;
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+}
+
+.spinner {
+  width: 36px;
+  height: 36px;
+  border: 2.5px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  TOP BAR                                                 ║
+   ╚══════════════════════════════════════════════════════════╝ */
+/* In flow above the photo — its own slice of the column, not an overlay. */
+#top-bar {
+  order: 0;
+  flex: 0 0 auto;
+  height: calc(var(--header-h) + var(--sat));
+  padding-top: var(--sat);
+  padding-left: calc(8px + var(--sal));
+  padding-right: calc(8px + var(--sar));
+  padding-bottom: 6px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  z-index: 50;
+}
+
+.bar-left, .bar-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+/* The filename yields space to the (fixed-size) icon buttons — on a 390px
+   iPhone the old fixed max-width pushed the right-side buttons off-screen. */
+.bar-left  { flex: 1 1 auto; min-width: 0; }
+.bar-right { flex: 0 0 auto; }
+
+/* Full filename in the file-info row — never truncated. Wraps to a second
+   line for very long names rather than hiding the frame counter. */
+.filename {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  ICON BUTTONS                                            ║
+   ╚══════════════════════════════════════════════════════════╝ */
+.icon-btn {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+.icon-btn:active, .icon-btn:hover { color: var(--text); background: var(--accent-glow); }
+.icon-btn.active { color: var(--accent); background: var(--accent-dim); }
+.icon-btn svg { width: 20px; height: 20px; }
+
+/* Histogram overlay — opt-in, drawn from the current preview. */
+#histogram {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 56px);
+  right: 12px;
+  width: 132px;
+  height: 66px;
+  background: rgba(13, 13, 13, 0.55);
+  border: 1px solid var(--accent-dim);
+  border-radius: 8px;
+  z-index: 40;
+  pointer-events: none;       /* never blocks canvas taps (zen toggle) */
+  image-rendering: auto;
+}
+
+/* Reset-to-defaults button (in the effects panel). */
+.reset-btn {
+  width: 100%;
+  padding: 9px 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--accent-dim);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.reset-btn:active, .reset-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+.reset-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.reset-btn:disabled:hover {       /* don't highlight a disabled button */
+  color: var(--text-dim);
+  border-color: var(--accent-dim);
+  background: transparent;
+}
+
+/* Per-slider reset-to-default button (core sliders) — only shown when moved. */
+.slider-reset {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  margin-left: 8px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--accent-dim);
+  border-radius: 50%;
+  cursor: pointer;
+}
+.slider-reset.visible { display: inline-flex; }
+.slider-reset:active, .slider-reset:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  PRIMARY BUTTON                                          ║
+   ╚══════════════════════════════════════════════════════════╝ */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 52px;
+  padding: 0 28px;
+  background: var(--accent);
+  color: #1a1000;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  border: none;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+  margin-top: 8px;
+}
+.btn-primary:active { opacity: 0.8; transform: scale(0.97); }
+.btn-primary svg { width: 18px; height: 18px; }
+
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  CONTROLS PANEL — solid block below the photo            ║
+   ╚══════════════════════════════════════════════════════════╝ */
+#controls {
+  order: 3;
+  flex: 0 0 auto;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  padding-bottom: max(var(--sab), 6px);
+  padding-left:  calc(var(--controls-pad) + var(--sal));
+  padding-right: calc(var(--controls-pad) + var(--sar));
+  display: flex;
+  flex-direction: column;
+}
+
+/* Anchor for the effects overlay: it covers exactly this stack (vibes +
+   sliders + action bar) — never the photo or the filmstrip. */
+#controls-stack { position: relative; }
+
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  EFFECTS PANEL — overlays the controls area only.        ║
+   ║  The photo keeps its full size while adjusting.          ║
+   ╚══════════════════════════════════════════════════════════╝ */
+#effects-panel {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  display: none;
+  flex-direction: column;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+#effects-panel.open { display: flex; }
+
+.fx-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--border);
+}
+.fx-head-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.fx-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+.fx-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color 0.15s, background 0.15s;
+}
+.fx-icon-btn:active { background: var(--surface-hi); }
+.fx-icon-btn svg { width: 17px; height: 17px; }
+.fx-icon-btn.active { color: var(--accent); }
+
+/* Batch settings row — always visible in main controls */
+#batch-settings-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0 2px;
+  border-top: 1px solid var(--border);
+}
+.batch-row-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.batch-apply-btn {
+  width: auto;
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 11px;
+}
+
+.fx-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+}
+
+/* FX Slider Area — shown above strip when a button is held */
+#fx-slider-area {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0 6px;
+  border-bottom: 1px solid var(--border);
+}
+#fx-slider-area.open { display: flex; }
+
+.fx-sa-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 26px;
+}
+.fx-sa-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+.fx-sa-reset-btn {
+  font-size: 16px;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  line-height: 1;
+  transition: color 0.15s, background 0.15s;
+}
+.fx-sa-reset-btn:active { background: var(--surface-hi); color: var(--accent); }
+
+/* Date options (format toggle + date picker) */
+#fx-date-options {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+#fx-date-options[hidden] { display: none; }
+
+#fx-slider-area .slider-mini { display: none; }
+#fx-slider-area .slider-mini.fx-sa-active { display: flex; }
+
+/* FX horizontal strip */
+#fx-strip {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 8px 0 6px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  border-bottom: 1px solid var(--border);
+}
+#fx-strip::-webkit-scrollbar { display: none; }
+
+.fx-btn {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 62px;
+  height: 70px;
+  padding: 8px 4px 6px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-faint);
+  cursor: pointer;
+  position: relative;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.fx-btn:active { background: var(--surface-hi); }
+.fx-btn.on {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.fx-btn.editing {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.fx-btn-icon {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+}
+.fx-btn-label {
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  color: inherit;
+  white-space: nowrap;
+  line-height: 1;
+  max-width: 58px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fx-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  flex-shrink: 0;
+  width: 108px;
+}
+
+.fx-toggle input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 32px;
+  height: 18px;
+  background: var(--slider-track);
+  border-radius: var(--radius-pill);
+  position: relative;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+.fx-toggle input[type="checkbox"]::after {
+  content: '';
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 14px; height: 14px;
+  background: var(--text-dim);
+  border-radius: 50%;
+  transition: transform 0.2s, background 0.2s;
+}
+.fx-toggle input[type="checkbox"]:checked {
+  background: var(--accent-dim);
+}
+.fx-toggle input[type="checkbox"]:checked::after {
+  transform: translateX(14px);
+  background: var(--accent);
+}
+
+.fx-name {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.fx-toggle input:checked + .fx-name { color: var(--text); }
+
+.fx-badge {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  margin-left: auto;
+}
+/* Date chip — a real <input type="date"> styled as an editable amber chip
+   (taps open the native iOS picker directly). */
+.date-chip {
+  margin-left: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 5px 10px;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  min-height: 32px;
+}
+.date-chip::-webkit-date-and-time-value { text-align: right; }
+.date-chip:active { background: var(--accent-dim); }
+
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  VIBE STRIP                                              ║
+   ╚══════════════════════════════════════════════════════════╝ */
+#vibe-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 7px 0 6px;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+#vibe-strip::-webkit-scrollbar { display: none; }
+.vibe-pill { scroll-snap-align: start; }
+
+.vibe-pill {
+  flex-shrink: 0;
+  height: 36px;
+  padding: 0 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.vibe-pill:active { background: var(--surface-hi); }
+.vibe-pill.active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  SCRUB SLIDERS                                           ║
+   ╚══════════════════════════════════════════════════════════╝ */
+
+/* Main (full-width) sliders */
+#core-sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 2px 0 4px;
+  border-top: 1px solid var(--border);
+}
+
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  touch-action: none;
+  cursor: ew-resize;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.slider-label {
+  width: 38px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
+.slider-track {
+  flex: 1;
+  height: 3px;
+  background: var(--slider-track);
+  border-radius: var(--radius-pill);
+  position: relative;
+  overflow: visible;
+}
+/* Expand touch area without expanding visual track */
+.slider-track::before {
+  content: '';
+  position: absolute;
+  inset: -18px 0;
+}
+
+.slider-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+  width: 50%; /* updated by JS */
+  transition: width 0s; /* instant during drag */
+}
+
+.slider-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  position: absolute;
+  top: 50%;
+  left: 50%; /* updated by JS */
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+  transition: transform 0.1s;
+}
+.slider-row:active .slider-thumb,
+.slider-row.dragging .slider-thumb {
+  transform: translate(-50%, -50%) scale(1.3);
+}
+
+.slider-val {
+  width: 40px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  text-align: right;
+  flex-shrink: 0;
+}
+.slider-row.dragging .slider-val { color: var(--accent); }
+
+/* Mini sliders (inside effects panel) */
+.slider-mini {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  touch-action: none;
+  cursor: ew-resize;
+  user-select: none;
+  -webkit-user-select: none;
+  min-width: 0;
+}
+.slider-mini .slider-track {
+  flex: 1;
+  height: 2px;
+  background: var(--slider-track);
+  border-radius: var(--radius-pill);
+  position: relative;
+}
+.slider-mini .slider-track::before {
+  content: '';
+  position: absolute;
+  inset: -14px 0;
+}
+.slider-mini .slider-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+  width: 50%;
+  opacity: 0.7;
+}
+.slider-mini .slider-thumb {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+.slider-mini .slider-val {
+  width: 36px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  ACTION BAR (effects toggle + export)                    ║
+   ╚══════════════════════════════════════════════════════════╝ */
+#action-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 2px;
+}
+
+.action-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  padding: 0 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.action-btn:active, .action-btn.active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.action-btn svg { width: 16px; height: 16px; }
+
+.export-group {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-export {
+  height: 44px;
+  padding: 0 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.btn-export:hover { background: var(--surface-hi); color: var(--text); }
+.btn-export:active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.btn-export:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  ZEN MODE (canvas tap to show/hide controls)             ║
+   ║  Bars leave the flow entirely so the photo region grows  ║
+   ║  to the full screen (JS re-renders on toggle).           ║
+   ╚══════════════════════════════════════════════════════════╝ */
+body.zen #top-bar   { display: none; }
+body.zen #file-info { display: none; }
+body.zen #controls  { display: none; }
+
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  TOAST NOTIFICATIONS                                     ║
+   ╚══════════════════════════════════════════════════════════╝ */
+.toast {
+  position: fixed;
+  bottom: calc(80px + var(--sab));
+  left: 50%;
+  transform: translateX(-50%) translateY(10px);
+  background: var(--surface-hi);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 10px 20px;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  z-index: 200;
+  opacity: 0;
+  transition: opacity 0.2s, transform 0.2s;
+  pointer-events: none;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.error { border-color: var(--danger); color: var(--danger); }
+
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  PHONE-FIRST: bigger touch targets on touch devices      ║
+   ╚══════════════════════════════════════════════════════════╝ */
+@media (pointer: coarse) {
+  /* Core sliders: tall rows, thick tracks, large thumbs. */
+  .slider-row   { height: 48px; gap: 12px; }
+  .slider-label { font-size: 12px; width: 44px; }
+  .slider-row .slider-track  { height: 6px; }
+  .slider-row .slider-thumb  { width: 26px; height: 26px; }
+  .slider-row .slider-val    { font-size: 13px; min-width: 44px; }
+
+  /* Effects: taller rows, bigger toggles. */
+  .fx-row    { min-height: 46px; }
+  .fx-name   { font-size: 14px; }
+  .fx-toggle { width: 130px; }
+  .fx-toggle input[type="checkbox"]                { width: 44px; height: 26px; }
+  .fx-toggle input[type="checkbox"]::after         { width: 20px; height: 20px; top: 3px; left: 3px; }
+  .fx-toggle input[type="checkbox"]:checked::after { transform: translateX(18px); }
+  .slider-mini .slider-track { height: 6px; }
+  .slider-mini .slider-thumb { width: 24px; height: 24px; }
+
+  /* Pills, strip thumbs, buttons: comfortable touch height. */
+  .vibe-pill   { height: 40px; font-size: 14px; padding: 0 16px; }
+  .strip-thumb { width: 96px; height: 64px; }
+  .seg-toggle button { height: 38px; min-width: 64px; font-size: 13px; }
+  .btn-export, .action-btn { height: 44px; }
+}
+
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  LANDSCAPE TWEAKS                                        ║
+   ╚══════════════════════════════════════════════════════════╝ */
+@media (orientation: landscape) and (max-height: 500px) {
+  #core-sliders { flex-direction: row; gap: 4px; }
+  .slider-row { flex: 1; }
+  .slider-label { width: 28px; font-size: 9px; }
+  #vibe-strip { padding: 6px 0 4px; }
+  #effects-panel.open { max-height: 70dvh; }
+}
+
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  SECONDARY BUTTON / TEXT LINK                            ║
+   ╚══════════════════════════════════════════════════════════╝ */
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;            /* comfortable touch target */
+  padding: 0 18px;
+  margin-top: 12px;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.btn-secondary:hover, .btn-secondary:active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+.btn-secondary svg { width: 18px; height: 18px; }
+
+.text-link {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 10px;
+  margin-top: 6px;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.text-link:active { color: var(--accent); }
+
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  CUSTOM PRESET PILLS                                     ║
+   ╚══════════════════════════════════════════════════════════╝ */
+.vibe-add {
+  flex: 0 0 auto;
+  min-width: 40px;
+  padding: 0 14px;
+  border-style: dashed !important;
+  font-size: 18px;
+  line-height: 1;
+}
+.vibe-pill.custom { font-style: italic; }
+/* User-imported LUT pills (◆-prefixed) — dashed border distinguishes them
+   from vibes and presets; active state matches the rest. */
+.vibe-pill.custom-lut { border-style: dashed; }
+
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  BOTTOM SHEET (help / about)                            ║
+   ╚══════════════════════════════════════════════════════════╝ */
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+.sheet.open { opacity: 1; pointer-events: auto; }
+.sheet-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.55); }
+.sheet-panel {
+  position: relative;
+  width: 100%;
+  max-width: 560px;
+  max-height: 88vh;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  display: flex;
+  flex-direction: column;
+  transform: translateY(100%);
+  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+.sheet.open .sheet-panel { transform: translateY(0); }
+.sheet-grip {
+  width: 36px; height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  margin: 10px auto 4px;
+  flex: 0 0 auto;
+}
+.sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 16px 10px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.sheet-head h2 { font-size: 17px; font-weight: 600; color: var(--text); }
+.sheet-close {
+  width: 36px; height: 36px;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 16px;
+  cursor: pointer;
+}
+.sheet-close:active { background: var(--accent-dim); color: var(--accent); }
+.sheet-body {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;     /* momentum scroll on iOS */
+  overscroll-behavior: contain;          /* don't rubber-band the page */
+  padding: 16px;
+  padding-bottom: calc(24px + var(--sab));
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1.55;
+}
+.sheet-body section { margin-bottom: 20px; }
+.sheet-body h3 {
+  color: var(--accent);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  margin-bottom: 8px;
+}
+.sheet-body p { margin-bottom: 8px; }
+.sheet-body ul { margin: 0 0 8px; padding-left: 18px; }
+.sheet-body li { margin-bottom: 5px; }
+.sheet-body b, .sheet-body strong { color: var(--text); font-weight: 600; }
+.sheet-version { color: var(--text-faint); font-size: 11px; text-align: center; margin-top: 4px; }
+
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  DIALOG SHEET (compact variant of the bottom sheet)      ║
+   ╚══════════════════════════════════════════════════════════╝ */
+.sheet-compact { max-height: none; }
+.sheet-compact .sheet-body { overflow-y: visible; }
+
+.dialog-message { color: var(--text); font-size: 14px; }
+
+.dialog-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  /* 16px+ stops iOS Safari from zooming the page when the field is focused. */
+  font-size: 16px;
+  font-family: var(--font);
+  -webkit-user-select: text;
+  user-select: text;
+}
+.dialog-input:focus { outline: none; border-color: var(--accent); }
+
+.dialog-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+.dialog-actions .btn-secondary { margin-top: 0; }
+
+.btn-dialog-confirm {
+  min-height: 44px;
+  padding: 0 22px;
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.btn-dialog-confirm:active { background: var(--accent); color: var(--bg); }
+.btn-dialog-confirm.danger {
+  background: rgba(224, 108, 117, 0.15);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  GPU-LOST RELOAD BAR                                     ║
+   ╚══════════════════════════════════════════════════════════╝ */
+#gpu-lost-bar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 400;
+  min-height: 44px;
+  padding: calc(8px + var(--sat)) 16px 8px;
+  background: rgba(224, 108, 117, 0.95);
+  border: none;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  SEGMENTED TOGGLE (batch format)                         ║
+   ╚══════════════════════════════════════════════════════════╝ */
+.seg-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.seg-toggle button {
+  min-width: 56px;
+  height: 30px;
+  padding: 0 12px;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.seg-toggle button.active {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  PHOTO STRIP (filmstrip at the top of the controls)      ║
+   ╚══════════════════════════════════════════════════════════╝ */
+#photo-strip {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+#photo-strip::-webkit-scrollbar { display: none; }
+
+.strip-thumb {
+  position: relative;
+  flex: 0 0 auto;
+  width: 88px;
+  height: 60px;
+  padding: 0;
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.strip-thumb canvas { width: 100%; height: 100%; display: block; }
+.strip-thumb.active { border-color: var(--accent); }
+.strip-idx {
+  position: absolute;
+  left: 4px;
+  top: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.55);
+  padding: 1px 5px;
+  border-radius: 6px;
+  pointer-events: none;
+}
+.strip-vibe {
+  position: absolute;
+  right: 4px;
+  bottom: 3px;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--accent);
+  background: rgba(0, 0, 0, 0.60);
+  padding: 1px 4px;
+  border-radius: 5px;
+  pointer-events: none;
+}
+
+/* Excluded-from-batch thumbnail state */
+.strip-thumb.excluded {
+  opacity: 0.4;
+  border-color: var(--border);
+}
+.strip-thumb.excluded::after {
+  content: '✕';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.85);
+  pointer-events: none;
+}
+
+/* Thumbnail action sheet */
+.thumb-action-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 350;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.thumb-action-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+}
+.thumb-action-panel {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 480px;
+  background: var(--surface);
+  border-radius: 16px 16px 0 0;
+  padding: 8px 0 max(env(safe-area-inset-bottom), 16px);
+  display: flex;
+  flex-direction: column;
+}
+.thumb-action-title {
+  font-size: 11px;
+  color: var(--text-dim, var(--text));
+  opacity: 0.6;
+  text-align: center;
+  padding: 8px 16px 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+  word-break: break-all;
+}
+.thumb-action-btn {
+  all: unset;
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 14px 20px;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+  text-align: center;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.thumb-action-btn:hover,
+.thumb-action-btn:focus-visible { background: var(--border); }
+.thumb-action-btn--danger { color: #e05555; }
+.thumb-action-btn--cancel {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  color: var(--text);
+  opacity: 0.7;
+}
+
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  EXPORT PROGRESS OVERLAY                                 ║
+   ╚══════════════════════════════════════════════════════════╝ */
+#progress-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 320;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 24px;
+}
+.progress-card {
+  width: min(86vw, 320px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: center;
+}
+#progress-title { color: var(--text); font-size: 14px; font-weight: 600; }
+#progress-sub { color: var(--text-dim); font-size: 12px; }
+.progress-bar {
+  height: 6px;
+  background: var(--slider-track);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+#progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+  transition: width 0.2s ease;
+}
+.progress-card .btn-secondary { margin-top: 4px; align-self: center; }
+
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  CROP & STRAIGHTEN EDITOR                                ║
+   ╚══════════════════════════════════════════════════════════╝ */
+#crop-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 320;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--sat);
+}
+#crop-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+#crop-canvas { touch-action: none; display: block; }
+
+#crop-controls {
+  flex: 0 0 auto;
+  padding: 10px calc(var(--controls-pad) + var(--sal))
+           calc(12px + var(--sab)) calc(var(--controls-pad) + var(--sar));
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+#crop-aspects {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+#crop-aspects::-webkit-scrollbar { display: none; }
+#crop-aspects button {
+  flex: 0 0 auto;
+  height: 36px;
+  padding: 0 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+}
+#crop-aspects button.active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+#crop-straighten {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.crop-st-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--text-faint);
+  flex: 0 0 auto;
+}
+#straighten-range {
+  flex: 1 1 auto;
+  accent-color: var(--accent);
+  height: 28px;
+}
+#straighten-val {
+  flex: 0 0 auto;
+  width: 44px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-dim);
+}
+#crop-actions {
+  display: flex;
+  gap: 10px;
+}
+#crop-actions button { flex: 1; margin-top: 0; }
+
+/* ╔══════════════════════════════════════════════════════════╗
+   ║  REDUCED MOTION                                          ║
+   ╚══════════════════════════════════════════════════════════╝ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}

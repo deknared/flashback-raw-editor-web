@@ -1,0 +1,11 @@
+# Cloudflare Workers Assets headers.
+#
+# COOP/COEP were previously required for libraw-wasm's SharedArrayBuffer worker,
+# but the pure-JS Bayer decoder (USE_JS_DECODER=true) handles all One35 DNGs
+# without ever spawning a libraw worker. Removing these headers fixes iOS
+# standalone PWA launch (COOP: same-origin forces a new browsing context on
+# every open in WKWebView standalone mode, causing a blank screen).
+
+# The WASM binary must be served as application/wasm for streaming compile.
+/assets/*.wasm
+  Content-Type: application/wasm

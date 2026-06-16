@@ -1,0 +1,110 @@
+/**
+ * one35-dng.js — Pure JavaScript Bayer decoder for Flashback One35 DNGs.
+ *
+ * The One35 DNG stores raw sensor data as uncompressed, MSB-first packed
+ * 10-bit integers (TIFF FillOrder=1 default, Compression=1). Verified from
+ * the file header: StripOffset=2048, StripByteCounts=15995840, BitsPerSample=10.
+ *
+ * Half-size decode (2×2 Bayer averaging) exactly matches rawpy's output at
+ * half_size=True, output_color=raw, no_auto_bright=True, gamma=(1,1),
+ * user_wb=[1,1,1,1], black_level=64. No WASM or build step required.
+ *
+ * This eliminates:
+ *   - LIBRAW_PREMUL [1.272, 1.0, 1.103] — no libraw scale_colors() applied
+ *   - GREEN_SHADOW/GREEN_HL tonal curve — G channel is now linear
+ *   - libraw-wasm's per-channel piecewise errors (source of green hue)
+ */
+
+const SENSOR_W     = 4144;
+const SENSOR_H     = 3088;
+const BITS         = 10;
+const SENSOR_BLACK = 64;
+const SENSOR_WHITE = (1 << BITS) - 1;  // 1023
+const SCALE        = 1.0 / (SENSOR_WHITE - SENSOR_BLACK);  // ≈ 1/959
+const BYTES_PER_ROW = (SENSOR_W * BITS) >> 3;  // 5180 bytes
+
+/**
+ * Decode a One35 DNG to half-size float32 RGB in [0, 1].
+ *
+ * The 2×2 RGGB averaging (rawpy's half_size=True algorithm):
+ *   R  = Bayer[y,   x]
+ *   G  = (Bayer[y, x+1] + Bayer[y+1, x]) / 2
+ *   B  = Bayer[y+1, x+1]
+ *
+ * Returns an interleaved Float32 RGB array suitable for FlashbackProcessor.
+ * @param {ArrayBuffer} buffer
+ * @returns {{ pixels: Float32Array, width: number, height: number }}
+ */
+export function decodeOne35HalfSize(buffer) {
+  const stripOffset = _readStripOffset(buffer);
+  const raw  = new Uint8Array(buffer, stripOffset);
+
+  const outW   = SENSOR_W >> 1;  // 2072
+  const outH   = SENSOR_H >> 1;  // 1544
+  const pixels = new Float32Array(outW * outH * 3);
+
+  const rowEven = new Uint16Array(SENSOR_W);
+  const rowOdd  = new Uint16Array(SENSOR_W);
+
+  for (let y = 0; y < SENSOR_H; y += 2) {
+    _readRow10MSB(raw, y       * BYTES_PER_ROW, rowEven);
+    _readRow10MSB(raw, (y + 1) * BYTES_PER_ROW, rowOdd);
+
+    const outY = y >> 1;
+    for (let x = 0; x < SENSOR_W; x += 2) {
+      const r  = (rowEven[x]     - SENSOR_BLACK) * SCALE;
+      const g1 = (rowEven[x + 1] - SENSOR_BLACK) * SCALE;
+      const g2 = (rowOdd[x]      - SENSOR_BLACK) * SCALE;
+      const b  = (rowOdd[x + 1]  - SENSOR_BLACK) * SCALE;
+
+      const di = (outY * outW + (x >> 1)) * 3;
+      pixels[di]     = r  < 0 ? 0 : r  > 1 ? 1 : r;
+      pixels[di + 1] = (g1 + g2) * 0.5;
+      pixels[di + 2] = b  < 0 ? 0 : b  > 1 ? 1 : b;
+    }
+  }
+
+  return { pixels, width: outW, height: outH };
+}
+
+/**
+ * Read W 10-bit pixels from one raw row into a Uint16Array.
+ * MSB-first packing: 4 pixels per 5 bytes.
+ *   pix[0] = (byte[0] << 2) | (byte[1] >> 6)
+ *   pix[1] = ((byte[1] & 0x3F) << 4) | (byte[2] >> 4)
+ *   pix[2] = ((byte[2] & 0x0F) << 6) | (byte[3] >> 2)
+ *   pix[3] = ((byte[3] & 0x03) << 8) | byte[4]
+ */
+function _readRow10MSB(raw, rowByteStart, out) {
+  const groups = SENSOR_W >> 2;  // 1036 (SENSOR_W is divisible by 4)
+  for (let g = 0, b = rowByteStart; g < groups; g++, b += 5) {
+    const b0 = raw[b], b1 = raw[b+1], b2 = raw[b+2], b3 = raw[b+3], b4 = raw[b+4];
+    out[g * 4]     = (b0 << 2)         | (b1 >> 6);
+    out[g * 4 + 1] = ((b1 & 0x3F) << 4) | (b2 >> 4);
+    out[g * 4 + 2] = ((b2 & 0x0F) << 6) | (b3 >> 2);
+    out[g * 4 + 3] = ((b3 & 0x03) << 8) | b4;
+  }
+}
+
+/** Parse IFD0 to find the raw strip byte offset. Falls back to 2048 (confirmed One35 default). */
+function _readStripOffset(buffer) {
+  try {
+    const dv   = new DataView(buffer);
+    const le   = dv.getUint16(0) === 0x4949;
+    const ifd0 = dv.getUint32(4, le);
+    const n    = dv.getUint16(ifd0, le);
+    for (let i = 0; i < n; i++) {
+      const e = ifd0 + 2 + i * 12;
+      if (dv.getUint16(e, le) !== 0x0111) continue;  // StripOffsets
+      const type  = dv.getUint16(e + 2, le);
+      const count = dv.getUint32(e + 4, le);
+      if (count === 1) {
+        return type === 3 ? dv.getUint16(e + 8, le) : dv.getUint32(e + 8, le);
+      }
+      // Multiple strips: read offset of first strip
+      const off = dv.getUint32(e + 8, le);
+      return type === 3 ? dv.getUint16(off, le) : dv.getUint32(off, le);
+    }
+  } catch { /* fall through */ }
+  return 2048;
+}

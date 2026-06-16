@@ -1,0 +1,15 @@
+{
+  // Cloudflare Workers static-assets deploy. The Git build runs `npm run build`
+  // (→ dist/), then `npx wrangler deploy` reads this and publishes dist/ as a
+  // static site. Workers Assets honors public/_headers (COOP/COEP), which
+  // libraw-wasm needs for SharedArrayBuffer.
+  //
+  // `name` MUST match your Cloudflare project/Worker name. It was created from
+  // the repo, so it's almost certainly this — if your project is named
+  // differently, change this and I'll re-push.
+  "name": "flashback-raw-editor-web",
+  "compatibility_date": "2026-06-13",
+  "assets": {
+    "directory": "./dist"
+  }
+}

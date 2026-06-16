@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <!-- viewport-fit=cover lets content go edge-to-edge under iPhone notch / home bar -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+
+  <!-- PWA meta tags -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Flashback">
+  <meta name="theme-color" content="#0d0d0d">
+
+  <link rel="manifest" href="/manifest.json">
+  <!-- iOS Safari ignores SVG apple-touch-icons, so point it at a real PNG. -->
+  <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png">
+  <link rel="stylesheet" href="/src/ui/style.css">
+
+  <title>Flashback Editor</title>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ══════════════════════════════════════════════════════════
+       PREVIEW CANVAS — fills the entire screen
+  ══════════════════════════════════════════════════════════ -->
+  <canvas id="preview-canvas" aria-label="Image preview"></canvas>
+
+  <!-- ══════════════════════════════════════════════════════════
+       EMPTY STATE — shown before any file is loaded
+  ══════════════════════════════════════════════════════════ -->
+  <div id="empty-state" aria-live="polite">
+    <div class="empty-icon">
+      <!-- Film frame SVG icon -->
+      <svg viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="8" y="12" width="64" height="56" rx="4" stroke="currentColor" stroke-width="2.5"/>
+        <!-- sprocket holes top -->
+        <rect x="14" y="6"  width="6" height="4" rx="1" fill="currentColor"/>
+        <rect x="26" y="6"  width="6" height="4" rx="1" fill="currentColor"/>
+        <rect x="48" y="6"  width="6" height="4" rx="1" fill="currentColor"/>
+        <rect x="60" y="6"  width="6" height="4" rx="1" fill="currentColor"/>
+        <!-- sprocket holes bottom -->
+        <rect x="14" y="70" width="6" height="4" rx="1" fill="currentColor"/>
+        <rect x="26" y="70" width="6" height="4" rx="1" fill="currentColor"/>
+        <rect x="48" y="70" width="6" height="4" rx="1" fill="currentColor"/>
+        <rect x="60" y="70" width="6" height="4" rx="1" fill="currentColor"/>
+        <!-- lens -->
+        <circle cx="40" cy="40" r="14" stroke="currentColor" stroke-width="2.5"/>
+        <circle cx="40" cy="40" r="7"  fill="currentColor" opacity="0.25"/>
+      </svg>
+    </div>
+    <h1>Flashback</h1>
+    <p>One35 v2 RAW Editor</p>
+    <button id="hero-open-btn" class="btn-primary">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+      </svg>
+      Open DNG File
+    </button>
+    <button id="resume-btn" class="btn-secondary hidden">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 12a9 9 0 1 0 9-9 9 9 0 0 0-6.36 2.64L3 8"/><path d="M3 3v5h5"/>
+      </svg>
+      <span id="resume-label">Resume last photo</span>
+    </button>
+    <p class="empty-hint">
+      Connect Flashback One35 v2 via USB-C →<br>
+      open Files app → copy DNG → tap Open
+    </p>
+    <button id="info-btn-empty" class="text-link" type="button">ⓘ How it works</button>
+    <div class="version-row">
+      <span class="version-tag" id="version-tag" aria-label="App version"></span>
+      <button id="refresh-btn" class="version-reload" type="button"
+              aria-label="Reload app" title="Reload to get the latest version">⟳ Reload</button>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       LOADING OVERLAY
+  ══════════════════════════════════════════════════════════ -->
+  <div id="loading-overlay" class="hidden" aria-live="polite" aria-busy="true">
+    <div class="spinner" role="status"></div>
+    <span id="loading-text">Loading…</span>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       TOP BAR
+  ══════════════════════════════════════════════════════════ -->
+  <header id="top-bar" class="hidden">
+    <div class="bar-left">
+      <button id="open-btn" class="icon-btn" aria-label="Open file" title="Open file">
+        <!-- Folder icon -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+        </svg>
+      </button>
+    </div>
+    <div class="bar-right">
+      <button id="info-btn" class="icon-btn" aria-label="Help and about" title="Help">
+        <!-- Info icon -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="12" y1="16" x2="12" y2="11"/>
+          <line x1="12" y1="8" x2="12.01" y2="8"/>
+        </svg>
+      </button>
+      <button id="hist-btn" class="icon-btn" aria-label="Toggle histogram" aria-pressed="false" title="Histogram">
+        <!-- Bar-chart icon -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="6" y1="20" x2="6" y2="12"/>
+          <line x1="12" y1="20" x2="12" y2="5"/>
+          <line x1="18" y1="20" x2="18" y2="15"/>
+        </svg>
+      </button>
+      <button id="crop-btn" class="icon-btn" aria-label="Crop and straighten" title="Crop &amp; straighten">
+        <!-- Crop icon -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M6 2v14a2 2 0 0 0 2 2h14"/>
+          <path d="M18 22V8a2 2 0 0 0-2-2H2"/>
+        </svg>
+      </button>
+      <button id="rotate-left-btn" class="icon-btn" aria-label="Rotate 90° left" title="Rotate left">
+        <!-- Rotate CCW icon -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="1 4 1 10 7 10"/>
+          <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+        </svg>
+      </button>
+      <button id="rotate-btn" class="icon-btn" aria-label="Rotate 90° right" title="Rotate right">
+        <!-- Rotate CW icon -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="23 4 23 10 17 10"/>
+          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+        </svg>
+      </button>
+      <button id="zen-btn" class="icon-btn" aria-label="Toggle zen mode" title="Zen mode">
+        <!-- Expand icon -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 3 21 3 21 9"/>
+          <polyline points="9 21 3 21 3 15"/>
+          <line x1="21" y1="3" x2="14" y2="10"/>
+          <line x1="3" y1="21" x2="10" y2="14"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Histogram overlay (opt-in; drawn from the current preview) -->
+  <canvas id="histogram" class="hidden" aria-hidden="true" width="256" height="128"></canvas>
+
+  <!-- File info row — full filename under the photo (like the desktop app's
+       bottom-left label) + photo position when several are loaded. -->
+  <div id="file-info" class="hidden">
+    <span id="filename-display" class="filename" title="Current file">—</span>
+    <span id="file-pos" class="hidden" aria-label="Photo position"></span>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       CONTROLS PANEL — solid block below the photo (never covers it).
+       The effects panel overlays ONLY the controls area below the
+       filmstrip; the photo and strip never move or shrink.
+  ══════════════════════════════════════════════════════════ -->
+  <div id="controls" class="hidden">
+
+    <!-- Photo strip: filmstrip of loaded files (shown with >1 file) -->
+    <div id="photo-strip" class="hidden" role="listbox" aria-label="Loaded photos"></div>
+
+    <!-- Everything below the strip; the effects panel covers exactly this. -->
+    <div id="controls-stack">
+
+    <!-- Effects panel (overlay over the controls, never the photo) -->
+    <div id="effects-panel" aria-label="Film effects">
+      <div class="fx-head">
+        <span class="fx-head-title">Effects</span>
+        <div class="fx-head-actions">
+          <button id="reset-btn" class="fx-icon-btn" type="button" aria-label="Reset adjustments" title="Reset adjustments">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="1 4 1 10 7 10"/>
+              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+            </svg>
+          </button>
+          <button id="effects-close" class="fx-icon-btn" type="button" aria-label="Close effects">✕</button>
+        </div>
+      </div>
+
+      <!-- Slider area — shown above strip when a button is held -->
+      <div id="fx-slider-area">
+        <div class="fx-sa-head">
+          <span id="fx-sa-label" class="fx-sa-name"></span>
+          <button id="fx-sa-reset-val" class="fx-sa-reset-btn" type="button" aria-label="Reset to default" hidden>↺</button>
+        </div>
+        <div id="fx-date-options" hidden>
+          <div class="seg-toggle" id="date-format-toggle" role="group" aria-label="Date format">
+            <button type="button" data-datefmt="YYMMDD" class="active">'YY MM DD</button>
+            <button type="button" data-datefmt="YYMM">'YY MM</button>
+          </div>
+          <input type="date" id="date-input" class="date-chip" aria-label="Stamp date">
+        </div>
+        <div class="slider-mini fx-sa-slider" id="fx-sm-grain"      data-param="grain_strength"   data-min="0"   data-max="3"    data-step="0.05"  data-value="0.8"  ><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">0.8</span></div>
+        <div class="slider-mini fx-sa-slider" id="fx-sm-halation"   data-param="halation_strength" data-min="0"   data-max="1"    data-step="0.05"  data-value="0.5"  ><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">0.5</span></div>
+        <div class="slider-mini fx-sa-slider" id="fx-sm-ca"         data-param="ca_strength"       data-min="0"   data-max="0.03" data-step="0.001" data-value="0.005"><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">0.005</span></div>
+        <div class="slider-mini fx-sa-slider" id="fx-sm-softness"   data-param="softness_sigma"    data-min="0"   data-max="3"    data-step="0.1"   data-value="0.5"  ><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">0.5</span></div>
+        <div class="slider-mini fx-sa-slider" id="fx-sm-sharpen"    data-param="sharpen_strength"  data-min="0"   data-max="2"    data-step="0.05"  data-value="0.5"  ><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">0.5</span></div>
+        <div class="slider-mini fx-sa-slider" id="fx-sm-vignette"   data-param="vignette_strength" data-min="0"   data-max="1"    data-step="0.05"  data-value="0.5"  ><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">0.5</span></div>
+        <div class="slider-mini fx-sa-slider" id="fx-sm-bloom"      data-param="bloom_strength"    data-min="0"   data-max="1"    data-step="0.05"  data-value="0.3"  ><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">0.3</span></div>
+        <div class="slider-mini fx-sa-slider" id="fx-sm-saturation" data-param="saturation"        data-min="0"   data-max="2"    data-step="0.02"  data-value="1"    ><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">1.00</span></div>
+        <div class="slider-mini fx-sa-slider" id="fx-sm-cnr"        data-param="cnr_sigma"         data-min="0"   data-max="4"    data-step="0.1"   data-value="2"    ><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">2.0</span></div>
+        <div class="slider-mini fx-sa-slider" id="fx-sm-quality"    data-param="jpeg_quality"      data-min="0.7" data-max="1"    data-step="0.01"  data-value="0.95" ><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">0.95</span></div>
+      </div>
+
+      <!-- Horizontal icon strip -->
+      <div id="fx-strip" role="toolbar" aria-label="Effect controls">
+        <button class="fx-btn on" type="button" data-fx="grain"      data-slider="fx-sm-grain"      data-toggle="fx-grain"      aria-label="Grain">
+          <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="7" cy="7" r="1.5"/><circle cx="15" cy="5" r="1.5"/><circle cx="19" cy="11" r="1.5"/><circle cx="5" cy="15" r="1.5"/><circle cx="12" cy="13" r="1.5"/><circle cx="18" cy="18" r="1.5"/><circle cx="9" cy="20" r="1.5"/><circle cx="14" cy="20" r="1"/></svg>
+          <span class="fx-btn-label">Grain</span>
+        </button>
+        <button class="fx-btn on" type="button" data-fx="halation"   data-slider="fx-sm-halation"   data-toggle="fx-halation"   aria-label="Halation">
+          <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="currentColor" opacity="0.85"/><circle cx="12" cy="12" r="6.5" stroke="currentColor" stroke-width="1.5" opacity="0.5"/><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1" opacity="0.25"/></svg>
+          <span class="fx-btn-label">Halation</span>
+        </button>
+        <button class="fx-btn on" type="button" data-fx="ca"         data-slider="fx-sm-ca"         data-toggle="fx-ca"         aria-label="Chromatic Aberration">
+          <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="12" r="5.5"/><circle cx="14" cy="12" r="5.5" opacity="0.45"/></svg>
+          <span class="fx-btn-label">Chrom.Ab.</span>
+        </button>
+        <button class="fx-btn on" type="button" data-fx="softness"   data-slider="fx-sm-softness"   data-toggle="fx-softness"   aria-label="Softness">
+          <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="4.5" stroke-width="1.8"/><circle cx="12" cy="12" r="8.5" stroke-width="1" stroke-dasharray="2.5 2" opacity="0.5"/></svg>
+          <span class="fx-btn-label">Softness</span>
+        </button>
+        <button class="fx-btn on" type="button" data-fx="sharpen"    data-slider="fx-sm-sharpen"    data-toggle="fx-sharpen"    aria-label="Sharpen">
+          <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><polygon points="12,3 21,12 12,21 3,12"/><polygon points="12,8 16,12 12,16 8,12" fill="currentColor" stroke="none" opacity="0.5"/></svg>
+          <span class="fx-btn-label">Sharpen</span>
+        </button>
+        <button class="fx-btn on" type="button" data-fx="vignette"   data-slider="fx-sm-vignette"   data-toggle="fx-vignette"   aria-label="Vignette">
+          <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2.5" y="2.5" width="19" height="19" rx="2.5" stroke="currentColor" stroke-width="1.5"/><rect x="6.5" y="6.5" width="11" height="11" rx="1.5" fill="currentColor" opacity="0.35"/></svg>
+          <span class="fx-btn-label">Vignette</span>
+        </button>
+        <button class="fx-btn on" type="button" data-fx="bloom"      data-slider="fx-sm-bloom"      data-toggle="fx-bloom"      aria-label="Bloom">
+          <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/><line x1="12" y1="3" x2="12" y2="6.5"/><line x1="12" y1="17.5" x2="12" y2="21"/><line x1="3" y1="12" x2="6.5" y2="12"/><line x1="17.5" y1="12" x2="21" y2="12"/><line x1="5.6" y1="5.6" x2="7.9" y2="7.9"/><line x1="16.1" y1="16.1" x2="18.4" y2="18.4"/><line x1="18.4" y1="5.6" x2="16.1" y2="7.9"/><line x1="7.9" y1="16.1" x2="5.6" y2="18.4"/></svg>
+          <span class="fx-btn-label">Bloom</span>
+        </button>
+        <button class="fx-btn" type="button" data-fx="saturation"    data-slider="fx-sm-saturation"                              aria-label="Saturation">
+          <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3 Q16.5 7.5 16.5 12 Q16.5 16.5 12 21 Q7.5 16.5 7.5 12 Q7.5 7.5 12 3Z" fill="currentColor" stroke="none" opacity="0.45"/></svg>
+          <span class="fx-btn-label">Saturation</span>
+        </button>
+        <button class="fx-btn on" type="button" data-fx="cnr"        data-slider="fx-sm-cnr"        data-toggle="fx-cnr"        aria-label="Denoise">
+          <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M2 9 Q5 5 8 9 Q11 13 14 9 Q17 5 20 9" opacity="0.4"/><path d="M2 15 Q5 11 8 15 Q11 19 14 15 Q17 11 20 15" opacity="0.7"/></svg>
+          <span class="fx-btn-label">Denoise</span>
+        </button>
+        <button class="fx-btn" type="button" data-fx="quality"       data-slider="fx-sm-quality"                                 aria-label="JPEG Quality">
+          <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2.5"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" stroke="none" opacity="0.7"/><path d="M3 15.5 L8 10.5 L13 14 L17 10 L21 14.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="fx-btn-label">Quality</span>
+        </button>
+        <button class="fx-btn on" type="button" data-fx="lut"                                       data-toggle="fx-lut"        aria-label="LUT">
+          <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          <span class="fx-btn-label">LUT</span>
+        </button>
+        <button class="fx-btn on" type="button" data-fx="autowb"                                    data-toggle="fx-autowb"     aria-label="Auto WB">
+          <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+          <span class="fx-btn-label">Auto WB</span>
+        </button>
+        <button class="fx-btn" type="button" data-fx="datestamp"                                    data-toggle="fx-datestamp"  aria-label="Date stamp">
+          <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          <span class="fx-btn-label">Date</span>
+        </button>
+        <button class="fx-btn" type="button" data-fx="framestamp"                                   data-toggle="fx-framestamp" aria-label="Frame no.">
+          <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><rect x="6" y="1" width="2" height="4" rx="0.5" fill="currentColor" stroke="none" opacity="0.7"/><rect x="16" y="1" width="2" height="4" rx="0.5" fill="currentColor" stroke="none" opacity="0.7"/><rect x="6" y="19" width="2" height="4" rx="0.5" fill="currentColor" stroke="none" opacity="0.7"/><rect x="16" y="19" width="2" height="4" rx="0.5" fill="currentColor" stroke="none" opacity="0.7"/></svg>
+          <span class="fx-btn-label">Frame</span>
+        </button>
+      </div>
+
+      <!-- Hidden state checkboxes (all togglable effects) -->
+      <div style="display:none" aria-hidden="true">
+        <label class="fx-toggle"><input type="checkbox" id="fx-grain"      checked data-effect="grain"></label>
+        <label class="fx-toggle"><input type="checkbox" id="fx-halation"   checked data-effect="halation"></label>
+        <label class="fx-toggle"><input type="checkbox" id="fx-ca"         checked data-effect="ca"></label>
+        <label class="fx-toggle"><input type="checkbox" id="fx-softness"   checked data-effect="softness"></label>
+        <label class="fx-toggle"><input type="checkbox" id="fx-sharpen"    checked data-effect="sharpen"></label>
+        <label class="fx-toggle"><input type="checkbox" id="fx-vignette"   checked data-effect="vignette"></label>
+        <label class="fx-toggle"><input type="checkbox" id="fx-bloom"      checked data-effect="bloom"></label>
+        <label class="fx-toggle"><input type="checkbox" id="fx-cnr"        checked data-effect="cnr"></label>
+        <label class="fx-toggle"><input type="checkbox" id="fx-lut"        checked data-effect="lut"></label>
+        <label class="fx-toggle"><input type="checkbox" id="fx-autowb"     checked></label>
+        <label class="fx-toggle"><input type="checkbox" id="fx-datestamp"></label>
+        <label class="fx-toggle"><input type="checkbox" id="fx-framestamp"></label>
+      </div>
+    </div><!-- /#effects-panel -->
+
+    <div id="controls-main">
+
+    <!-- Vibe strip -->
+    <div id="vibe-strip" role="tablist" aria-label="Film vibes">
+      <button class="vibe-pill active" role="tab" aria-selected="true"  data-vibe="natural">Natural</button>
+      <button class="vibe-pill"        role="tab" aria-selected="false" data-vibe="disposable">Disposable</button>
+      <button class="vibe-pill"        role="tab" aria-selected="false" data-vibe="point_shoot">Point &amp; Shoot</button>
+      <button class="vibe-pill"        role="tab" aria-selected="false" data-vibe="rangefinder">Rangefinder</button>
+      <button class="vibe-pill"        role="tab" aria-selected="false" data-vibe="monochrome">Monochrome</button>
+      <button class="vibe-pill"        role="tab" aria-selected="false" data-vibe="flashback_v1">Flashback V1</button>
+      <button class="vibe-pill"        role="tab" aria-selected="false" data-vibe="reddispo">Gold</button>
+      <!-- Custom preset pills are inserted here by main.js -->
+      <button id="save-preset-btn" class="vibe-pill vibe-add" type="button"
+              aria-label="Save current look as a preset" title="Save preset">＋</button>
+    </div>
+
+    <!-- Core sliders: Exposure, White Balance, Tint -->
+    <div id="core-sliders">
+
+      <div class="slider-row"
+           data-param="exposure"
+           data-min="-3" data-max="2" data-step="0.05" data-value="0">
+        <span class="slider-label">EXP</span>
+        <div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div>
+        <span class="slider-val">0.0</span>
+      </div>
+
+      <div class="slider-row"
+           data-param="wb_temp"
+           data-min="-1500" data-max="1500" data-step="10" data-value="0">
+        <span class="slider-label">TEMP</span>
+        <div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div>
+        <span class="slider-val">0</span>
+      </div>
+
+      <div class="slider-row"
+           data-param="tint"
+           data-min="-15" data-max="15" data-step="0.2" data-value="0">
+        <span class="slider-label">TINT</span>
+        <div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div>
+        <span class="slider-val">0.0</span>
+      </div>
+
+      <div class="slider-row"
+           data-param="push_pull"
+           data-min="-2" data-max="2" data-step="0.1" data-value="0"
+           title="Push/Pull — contrast & punch">
+        <span class="slider-label">PUSH</span>
+        <div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div>
+        <span class="slider-val">0.0</span>
+      </div>
+
+    </div><!-- /#core-sliders -->
+
+    <!-- Batch export settings — always visible in main controls -->
+    <div id="batch-settings-row">
+      <span class="batch-row-label">Batch</span>
+      <div class="seg-toggle" id="batch-format" role="group" aria-label="Batch export format">
+        <button type="button" data-fmt="jpeg" class="active" aria-pressed="true">JPEG</button>
+        <button type="button" data-fmt="tiff" aria-pressed="false">TIFF</button>
+      </div>
+      <button id="apply-all-btn" class="reset-btn batch-apply-btn" type="button" disabled
+              title="Load 2+ photos to copy EXP/WB/tint across the whole roll">Apply all</button>
+    </div>
+
+    <!-- Bottom action bar -->
+    <div id="action-bar">
+      <button id="effects-btn" class="action-btn" aria-expanded="false" aria-controls="effects-panel">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
+        </svg>
+        Effects
+      </button>
+
+      <div class="export-group">
+        <button id="batch-btn" class="btn-export hidden" aria-label="Develop all selected files">Batch</button>
+        <button id="export-jpeg-btn" class="btn-export" aria-label="Export as JPEG">JPEG</button>
+        <button id="export-tiff-btn" class="btn-export" aria-label="Export as 16-bit TIFF">TIFF</button>
+      </div>
+    </div><!-- /#action-bar -->
+
+    </div><!-- /#controls-main -->
+    </div><!-- /#controls-stack -->
+
+  </div><!-- /#controls -->
+
+  <!-- ══════════════════════════════════════════════════════════
+       CROP & STRAIGHTEN EDITOR
+  ══════════════════════════════════════════════════════════ -->
+  <div id="crop-sheet" class="hidden" role="dialog" aria-modal="true" aria-label="Crop and straighten">
+    <div id="crop-stage">
+      <canvas id="crop-canvas"></canvas>
+    </div>
+    <div id="crop-controls">
+      <div id="crop-aspects" role="group" aria-label="Aspect ratio">
+        <button data-aspect="original">Original</button>
+        <button data-aspect="free" class="active">Free</button>
+        <button data-aspect="1">1:1</button>
+        <button data-aspect="1.3333">4:3</button>
+        <button data-aspect="0.75">3:4</button>
+        <button data-aspect="1.5">3:2</button>
+        <button data-aspect="0.6667">2:3</button>
+      </div>
+      <div id="crop-straighten">
+        <span class="crop-st-label">STRAIGHTEN</span>
+        <input type="range" id="straighten-range" min="-15" max="15" step="0.5" value="0" aria-label="Straighten angle">
+        <span id="straighten-val">0°</span>
+      </div>
+      <div id="crop-actions">
+        <button id="crop-cancel" class="btn-secondary" type="button">Cancel</button>
+        <button id="crop-reset" class="btn-secondary" type="button">Reset</button>
+        <button id="crop-done" class="btn-dialog-confirm" type="button">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       HELP / ABOUT SHEET
+  ══════════════════════════════════════════════════════════ -->
+  <div id="help-sheet" class="sheet" role="dialog" aria-modal="true" aria-label="Help and about">
+    <div class="sheet-backdrop" data-close="help-sheet"></div>
+    <div class="sheet-panel">
+      <div class="sheet-grip"></div>
+      <header class="sheet-head">
+        <h2>Flashback — Help</h2>
+        <button class="sheet-close" data-close="help-sheet" aria-label="Close help">✕</button>
+      </header>
+      <div class="sheet-body">
+
+        <section>
+          <h3>What this is</h3>
+          <p>A film-look RAW editor for the Flashback One35 v2. It decodes your DNG,
+          applies a film "stock" (a colour LUT) plus optical effects, and exports a
+          finished JPEG or 16-bit TIFF. Everything runs <strong>on this device</strong> —
+          your photos never leave the phone, and it works fully offline once installed.</p>
+        </section>
+
+        <section>
+          <h3>Film vibes</h3>
+          <p>Pick a stock from the strip at the bottom. Each is a different look:</p>
+          <ul>
+            <li><b>Natural</b> — the developed raw, nothing added: no film look, no
+            effects, no exposure lift. Just your exposure, white balance and tint.
+            This is the default and the truest starting point.</li>
+            <li><b>Gold</b> — built-in warm, saturated film-style grade. An original
+            interpretation — for an exact look, import a .cube via the ＋ button.</li>
+            <li><b>Disposable</b> — punchy, contrasty, heavy grain &amp; vignette.</li>
+            <li><b>Point &amp; Shoot</b> — balanced consumer-film look, gentle grain.</li>
+            <li><b>Rangefinder</b> — clean, fine-grained, restrained.</li>
+            <li><b>Monochrome</b> — black &amp; white with strong grain.</li>
+          </ul>
+          <p>Tap <b>＋</b> to save your current look as a preset or import a <b>.cube</b>
+          LUT. Tap a custom preset to load it; press and hold it to delete.</p>
+          <p><b>Custom LUTs:</b> tap <b>＋ → Import LUT</b> to import a <b>.cube</b>
+          file. It appears as a <b>◆ pill</b> and replaces the current vibe's colour
+          transform (effects stay). Press and hold the pill to delete.</p>
+          <p><b>Date stamp:</b> toggle under Effects to burn the photo's capture date
+          into the corner, 2000s-camera style. Applies to the preview and JPEG
+          exports (TIFF stays clean).</p>
+        </section>
+
+        <section>
+          <h3>Adjustments</h3>
+          <ul>
+            <li><b>EXP</b> — exposure (brightness), in stops.</li>
+            <li><b>TEMP</b> — white balance, cooler ↔ warmer.</li>
+            <li><b>TINT</b> — green ↔ magenta balance.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h3>Effects (tap “Effects”)</h3>
+          <ul>
+            <li><b>Grain</b> — film grain texture.</li>
+            <li><b>Halation</b> — red/orange glow bleeding from highlights.</li>
+            <li><b>Chrom. Ab.</b> — colour fringing toward the frame edges.</li>
+            <li><b>Softness</b> — gentle overall blur.</li>
+            <li><b>Sharpen</b> — local contrast / edge crispness.</li>
+            <li><b>Vignette</b> — darkening toward the corners.</li>
+            <li><b>Bloom</b> — soft glow spreading from bright areas.</li>
+            <li><b>LUT</b> — the film colour transform itself (off = neutral).</li>
+          </ul>
+        </section>
+
+        <section>
+          <h3>Gestures</h3>
+          <ul>
+            <li><b>Tap</b> the photo — hide / show the controls (zen).</li>
+            <li><b>Press &amp; hold</b> the photo — peek at the un-edited original.</li>
+            <li><b>Pinch</b> — zoom in; drag to pan; double-tap to fit.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h3>Photo strip (multiple DNGs)</h3>
+          <p>Opening several DNGs at once shows a filmstrip above the controls. Each
+          thumbnail remembers its own profile, adjustments, crop, and rotation — switch
+          between photos and your edits stay put. A small badge on each thumbnail shows
+          which film vibe it's set to.</p>
+          <ul>
+            <li><b>Tap</b> a thumbnail — switch to that photo (instant if you've viewed
+            it before in this session).</li>
+            <li><b>Long-press</b> a thumbnail — exclude/include it from the batch export.
+            Excluded photos dim and show a small ✕.</li>
+            <li><b>Swipe up</b> on a thumbnail — remove it from the queue entirely (asks
+            for confirmation first). This only removes it from this session — it does
+            not delete the file from your device.</li>
+            <li><b>Apply adjustments to all photos</b> (under Effects) stamps the current
+            photo's profile, exposure, WB, and tint across the whole roll (rotation and
+            crop stay per-photo).</li>
+          </ul>
+        </section>
+
+        <section>
+          <h3>Exporting</h3>
+          <ul>
+            <li><b>JPEG</b> — 8-bit, great for sharing. Quality is adjustable under Effects.</li>
+            <li><b>TIFF</b> — 16-bit, best for further editing.</li>
+            <li>Both export at <b>full resolution</b>. Saving opens the share sheet —
+            pick <b>Save Image</b> (Photos) or <b>Save to Files</b>.</li>
+            <li>The <b>Batch</b> button develops every <i>included</i> photo (see Photo
+            strip above) — each with its own profile and adjustments — then saves them
+            together in <b>one</b> share sheet. The button label shows how many are
+            included, e.g. <b>Batch 4/6</b>.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h3>Getting photos onto the phone</h3>
+          <p>Connect the One35 v2 via USB-C, copy the DNGs into the Files app (or iCloud
+          Drive), then tap <b>Open</b>. Safari can't talk to the camera over USB directly.</p>
+        </section>
+
+        <section>
+          <h3>Privacy &amp; offline</h3>
+          <p>All decoding and processing happen on your phone's GPU. The app only ever
+          downloads its own code once; after that it runs offline. No account, no upload.</p>
+        </section>
+
+        <section>
+          <h3>Credits</h3>
+          <p>A browser port of the original
+          <a href="https://github.com/lofilogic/flashback-raw-editor" target="_blank" rel="noopener">flashback-raw-editor</a>
+          by <b>lofilogic</b> (Python + PySide6 + WebGPU), rebuilt as a Progressive Web
+          App by <b>deknared</b>. Source code is published under the
+          <a href="https://github.com/deknared/flashback-raw-editor-web" target="_blank" rel="noopener">GPL-3.0 license</a>.</p>
+        </section>
+
+        <p class="sheet-version" id="help-version"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       DIALOG SHEET (preset naming / confirmations)
+       Replaces window.prompt/confirm, which are unreliable in
+       iOS standalone (home-screen) PWAs.
+  ══════════════════════════════════════════════════════════ -->
+  <div id="dialog-sheet" class="sheet" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+    <div class="sheet-backdrop" data-dialog-cancel></div>
+    <div class="sheet-panel sheet-compact">
+      <div class="sheet-grip"></div>
+      <header class="sheet-head">
+        <h2 id="dialog-title">Dialog</h2>
+        <button class="sheet-close" data-dialog-cancel aria-label="Cancel">✕</button>
+      </header>
+      <div class="sheet-body">
+        <p id="dialog-message" class="dialog-message hidden"></p>
+        <input id="dialog-input" class="dialog-input hidden" type="text" maxlength="24"
+               autocomplete="off" autocapitalize="words" enterkeyhint="done" aria-label="Name">
+        <div class="dialog-actions">
+          <button id="dialog-cancel" class="btn-secondary" type="button">Cancel</button>
+          <button id="dialog-alt" class="btn-secondary hidden" type="button"></button>
+          <button id="dialog-confirm" class="btn-dialog-confirm" type="button">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       EXPORT PROGRESS OVERLAY
+  ══════════════════════════════════════════════════════════ -->
+  <div id="progress-overlay" class="hidden" role="dialog" aria-label="Export progress" aria-live="polite">
+    <div class="progress-card">
+      <div id="progress-title">Exporting…</div>
+      <div class="progress-bar"><div id="progress-fill"></div></div>
+      <div id="progress-sub">0 / 0</div>
+      <button id="progress-cancel" class="btn-secondary" type="button">Cancel</button>
+    </div>
+  </div>
+
+</div><!-- /#app -->
+
+<!-- Hidden file inputs — triggered programmatically -->
+<input
+  type="file"
+  id="file-input"
+  accept=".dng,.DNG,.tif,.tiff,.TIF,.TIFF"
+  multiple
+  hidden
+  aria-hidden="true"
+>
+<input
+  type="file"
+  id="lut-input"
+  accept=".cube,.CUBE"
+  hidden
+  aria-hidden="true"
+>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
