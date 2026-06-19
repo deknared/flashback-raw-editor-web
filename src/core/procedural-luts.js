@@ -52,26 +52,56 @@ function scurve(x, s) {
 // Each grade takes display-sRGB [r,g,b] in 0..1 and returns the graded triple.
 
 const GRADES = {
-  // Warm red disposable: punchy red/orange, deeper blacks, higher contrast.
+  // Warm Kodak-print character: rich reds/oranges, controlled highlights, deep blacks.
   // Labelled "Gold" in the UI.
   reddispo(r, g, b) {
-    r *= 1.11; g *= 1.00; b *= 0.90;            // warm-red WB
-    r = scurve(clamp01(r), 0.30);
-    g = scurve(clamp01(g), 0.30);
-    b = scurve(clamp01(b), 0.30);
+    r = clamp01(r * 1.07); b = clamp01(b * 0.92);  // warm WB (softer than 1.11)
+    r = scurve(clamp01(r), 0.20);
+    g = scurve(clamp01(g), 0.20);
+    b = scurve(clamp01(b), 0.20);
     const l = 0.299 * r + 0.587 * g + 0.114 * b;
     const sh = 1 - l;
-    r = clamp01(r + 0.06 * sh);                  // red push into shadows
-    b = clamp01(b - 0.04 * sh);                  // crush blue lows (deeper blacks)
+    r = clamp01(r + 0.04 * sh);                    // red push into shadows
+    b = clamp01(b - 0.03 * sh);                    // crush blue lows
     const sat = 1.22;
     r = clamp01(lerp(l, r, sat)); g = clamp01(lerp(l, g, sat)); b = clamp01(lerp(l, b, sat));
+    // Highlight desaturation — prevents magenta clipping in blown areas.
+    const l2 = 0.299 * r + 0.587 * g + 0.114 * b;
+    const hd = clamp01((l2 - 0.82) / 0.14);
+    r = lerp(r, l2, hd); g = lerp(g, l2, hd); b = lerp(b, l2, hd);
+    return [clamp01(r), clamp01(g), clamp01(b)];
+  },
+
+  // Expired Fuji Superia Xtra 400: teal-cyan shadows, warm highlights, vivid reds.
+  superia(r, g, b) {
+    // Base teal-green WB cast (more green, less blue)
+    r = clamp01(r * 0.90); g = clamp01(g * 1.07); b = clamp01(b * 1.00);
+    r = scurve(r, 0.25); g = scurve(g, 0.25); b = scurve(b, 0.25);
+    const l = 0.299 * r + 0.587 * g + 0.114 * b;
+    const sh = 1 - l;
+    // Shadow teal-green push
+    r = clamp01(r - 0.05 * sh);
+    g = clamp01(g + 0.04 * sh);
+    b = clamp01(b + 0.02 * sh);
+    // Highlight warm recovery (split-tone: warm highs vs cool lows)
+    const hiWarm = clamp01((l - 0.50) / 0.35);
+    r = clamp01(r + 0.08 * hiWarm);
+    b = clamp01(b - 0.04 * hiWarm);
+    // Highlight desaturation (expired = less saturation in whites)
+    const l2 = 0.299 * r + 0.587 * g + 0.114 * b;
+    const hd = clamp01((l2 - 0.82) / 0.14);
+    r = lerp(r, l2, hd); g = lerp(g, l2, hd); b = lerp(b, l2, hd);
+    // Mild saturation boost for Fuji's vivid colour character
+    const l3 = 0.299 * r + 0.587 * g + 0.114 * b;
+    const sat = 1.12;
+    r = clamp01(lerp(l3, r, sat)); g = clamp01(lerp(l3, g, sat)); b = clamp01(lerp(l3, b, sat));
     return [r, g, b];
   },
 };
 
 /**
  * Generate a film-look LUT.
- * @param {string} id  one of: reddispo
+ * @param {string} id  one of: reddispo, superia
  * @param {number} [size]  cube size (default 33)
  * @returns {{ size:number, data:Float32Array }}  shader order: ((r*N+g)*N+b)*3
  */

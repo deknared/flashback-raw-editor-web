@@ -32,15 +32,17 @@ import {
   CNR_SIGMA_SPACE, CNR_SIGMA_COLOR, CNR_RADIUS, CNR_THR_GREEN, CNR_THR_OTHER,
 } from './config.js';
 
-import caUrl            from '../shaders/chromatic_aberration.wgsl?url';
-import vignetteUrl      from '../shaders/vignette.wgsl?url';
-import highlightsUrl    from '../shaders/highlights.wgsl?url';
+import caUrl             from '../shaders/chromatic_aberration.wgsl?url';
+import vignetteUrl       from '../shaders/vignette.wgsl?url';
+import highlightsUrl     from '../shaders/highlights.wgsl?url';
+import halCombineUrl     from '../shaders/halation_combine.wgsl?url';
+import bloomSmallUrl     from '../shaders/bloom_small.wgsl?url';
 import highlightDesatUrl from '../shaders/highlight_desat.wgsl?url';
-import grainSampleUrl   from '../shaders/grain_sample.wgsl?url';
-import blurUrl          from '../shaders/gaussian_blur.wgsl?url';
-import blendUrl         from '../shaders/blend.wgsl?url';
-import grainUrl         from '../shaders/grain.wgsl?url';
-import cnrUrl           from '../shaders/cnr.wgsl?url';
+import grainSampleUrl    from '../shaders/grain_sample.wgsl?url';
+import blurUrl           from '../shaders/gaussian_blur.wgsl?url';
+import blendUrl          from '../shaders/blend.wgsl?url';
+import grainUrl          from '../shaders/grain.wgsl?url';
+import cnrUrl            from '../shaders/cnr.wgsl?url';
 
 const STORAGE_RW = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
 
@@ -74,10 +76,12 @@ export class Effects {
     if (this._ready) return true;
     if (!isAvailable()) return false;
 
-    const [ca, vig, hi, hdesat, gsample, blur, blend, grain, cnr] = await Promise.all([
+    const [ca, vig, hi, halCombine, bloomSm, hdesat, gsample, blur, blend, grain, cnr] = await Promise.all([
       loadShaderModule(caUrl),
       loadShaderModule(vignetteUrl),
       loadShaderModule(highlightsUrl),
+      loadShaderModule(halCombineUrl),
+      loadShaderModule(bloomSmallUrl),
       loadShaderModule(highlightDesatUrl),
       loadShaderModule(grainSampleUrl),
       loadShaderModule(blurUrl),
@@ -87,22 +91,25 @@ export class Effects {
     ]);
 
     this._pipelines = {
-      ca:        createComputePipeline(ca,      'main',          'fx-ca'),
-      vignette:  createComputePipeline(vig,     'main',          'fx-vignette'),
-      bloom:     createComputePipeline(hi,      'main_bloom',    'fx-bloom-mask'),
-      halation:  createComputePipeline(hi,      'main_halation', 'fx-halation-mask'),
-      desat:     createComputePipeline(hdesat,  'main',          'fx-highlight-desat'),
-      gsample:   createComputePipeline(gsample, 'main',          'fx-grain-sample'),
-      blurH:     createComputePipeline(blur,    'main_h',        'fx-blur-h'),
-      blurV:     createComputePipeline(blur,    'main_v',        'fx-blur-v'),
-      screen:    createComputePipeline(blend,   'main_screen',   'fx-screen'),
-      add:       createComputePipeline(blend,   'main_add',      'fx-add'),
-      unsharp:   createComputePipeline(blend,   'main_unsharp',  'fx-unsharp'),
-      grain:     createComputePipeline(grain,   'main',          'fx-grain'),
-      cnrToLab:    createComputePipeline(cnr, 'main_to_lab',    'fx-cnr-tolab'),
-      cnrDespike:  createComputePipeline(cnr, 'main_despike',   'fx-cnr-despike'),
-      cnrBilateral:createComputePipeline(cnr, 'main_bilateral', 'fx-cnr-bilateral'),
-      cnrToAcescg: createComputePipeline(cnr, 'main_to_acescg', 'fx-cnr-toacescg'),
+      ca:           createComputePipeline(ca,         'main',          'fx-ca'),
+      vignette:     createComputePipeline(vig,        'main',          'fx-vignette'),
+      bloom:        createComputePipeline(hi,         'main_bloom',    'fx-bloom-mask'),
+      halation:     createComputePipeline(hi,         'main_halation', 'fx-halation-mask'),
+      halCombine:   createComputePipeline(halCombine, 'main',          'fx-hal-combine'),
+      bloomDown:    createComputePipeline(bloomSm,    'main_down',     'fx-bloom-down'),
+      bloomUpadd:   createComputePipeline(bloomSm,    'main_upadd',    'fx-bloom-upadd'),
+      desat:        createComputePipeline(hdesat,     'main',          'fx-highlight-desat'),
+      gsample:      createComputePipeline(gsample,    'main',          'fx-grain-sample'),
+      blurH:        createComputePipeline(blur,       'main_h',        'fx-blur-h'),
+      blurV:        createComputePipeline(blur,       'main_v',        'fx-blur-v'),
+      screen:       createComputePipeline(blend,      'main_screen',   'fx-screen'),
+      add:          createComputePipeline(blend,      'main_add',      'fx-add'),
+      unsharp:      createComputePipeline(blend,      'main_unsharp',  'fx-unsharp'),
+      grain:        createComputePipeline(grain,      'main',          'fx-grain'),
+      cnrToLab:     createComputePipeline(cnr,        'main_to_lab',    'fx-cnr-tolab'),
+      cnrDespike:   createComputePipeline(cnr,        'main_despike',   'fx-cnr-despike'),
+      cnrBilateral: createComputePipeline(cnr,        'main_bilateral', 'fx-cnr-bilateral'),
+      cnrToAcescg:  createComputePipeline(cnr,        'main_to_acescg', 'fx-cnr-toacescg'),
     };
     this._ready = true;
     return true;
@@ -311,17 +318,18 @@ export class Effects {
     const s = scale > 0 ? scale : 1;
     const px = dispatchSize(w * h, 64);
     const el = dispatchSize(count, 256);
-    const linThr = (stops) => 0.18 * Math.pow(2, stops);
+    // Convert linear stops to ACEScct: (log2(0.18·2^stops) + 9.72) / 17.52
+    const acescctThr = (stops) => (Math.log2(0.18 * Math.pow(2, stops)) + 9.72) / 17.52;
+    const linThr     = (stops) => 0.18 * Math.pow(2, stops);
 
     let cur = src;
     const A = getBuf('preA', count);
     const B = getBuf('preB', count);
 
-    // 1. Halation — red-orange highlight glow (image-coloured, blue removed),
-    //    masked on the brightest channel, blurred, added back.
+    // 1. Halation — single-pass red-orange highlight glow, additively blended.
     if (c.enable_halation && (c.halation_strength ?? 0) > 0) {
       const mask = getBuf('mask', count);
-      const tmp  = getBuf('tmp', count);
+      const tmp  = getBuf('tmp',  count);
       const u = createUniformBuffer(new Float32Array([
         w, h, linThr(c.halation_threshold_stops ?? 4.0), c.halation_strength,
       ]));
@@ -353,26 +361,49 @@ export class Effects {
       u.destroy();
     }
 
-    // 3. Bloom — large soft glow on highlights, additive (linear HDR).
+    // 3. Bloom — 4× pyramid approach (port of OP's apply_bloom).
+    //    Downsample + ACEScct mask at 1/4 res, Gaussian blur at adaptive sigma
+    //    (sigma = max(2, max_dim/5) at small res ≈ 412px effective at full res),
+    //    bilinear upsample + additive blend.
     if (c.enable_bloom && (c.bloom_strength ?? 0) > 0) {
-      const mask = getBuf('mask', count);
-      const tmp  = getBuf('tmp', count);
-      const u = createUniformBuffer(new Float32Array([
-        w, h, linThr(c.bloom_threshold_stops ?? 3.0), c.bloom_strength,
-      ]));
-      runCompute(this._pipelines.bloom, [
+      const smallW = Math.max(1, Math.ceil(w / 4));
+      const smallH = Math.max(1, Math.ceil(h / 4));
+      const smallCount = smallW * smallH * 3;
+      const small = getBuf('bloomSmall', smallCount);
+      const tmp   = getBuf('tmp', Math.max(count, smallCount));
+
+      const bloomThr = acescctThr(c.bloom_threshold_stops ?? 3.0);
+      const ud = new ArrayBuffer(32);
+      new Uint32Array(ud).set([w, h, smallW, smallH]);
+      new Float32Array(ud, 16).set([bloomThr, 0, 0, 0]);
+      const uDown = createUniformBuffer(new Float32Array(ud));
+
+      // Dispatch: one thread per output (small) pixel
+      const downPx = dispatchSize(smallW * smallH, 64);
+      runCompute(this._pipelines.bloomDown, [
         { binding: 0, resource: { buffer: cur } },
-        { binding: 1, resource: { buffer: mask } },
-        { binding: 2, resource: { buffer: u } },
-      ], px);
-      u.destroy();
-      this._blur(mask, mask, tmp, w, h, count, 6 * s);
+        { binding: 1, resource: { buffer: small } },
+        { binding: 2, resource: { buffer: uDown } },
+      ], downPx);
+      uDown.destroy();
+
+      // Blur at adaptive sigma on the SMALL buffer
+      const sigma = Math.max(2, Math.max(smallW, smallH) / 5);
+      this._blur(small, small, tmp, smallW, smallH, smallCount, sigma);
+
+      // Upsample + additive blend back to full res
       const dst = (cur === A) ? B : A;
-      runCompute(this._pipelines.add, [
+      const uup = new ArrayBuffer(32);
+      new Uint32Array(uup).set([w, h, smallW, smallH]);
+      new Float32Array(uup, 16).set([c.bloom_strength, 0, 0, 0]);
+      const uUp = createUniformBuffer(new Float32Array(uup));
+      runCompute(this._pipelines.bloomUpadd, [
         { binding: 0, resource: { buffer: cur } },
-        { binding: 1, resource: { buffer: mask } },
+        { binding: 1, resource: { buffer: small } },
         { binding: 2, resource: { buffer: dst } },
-      ], el);
+        { binding: 3, resource: { buffer: uUp } },
+      ], px);
+      uUp.destroy();
       cur = dst;
     }
 

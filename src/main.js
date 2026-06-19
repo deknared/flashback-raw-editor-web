@@ -9,6 +9,7 @@
  */
 
 import { initSliders, setSliderValue } from './ui/sliders.js';
+import { loadSettings, saveSettings, applyVibeOrder, initSettings, applyTheme } from './ui/settings.js';
 import { encodeJpegFile, encodeTiffFile, deliverFiles } from './ui/export.js';
 import { factoryStateFor, VIBE_PRESETS, DEFAULT_CONFIG } from './core/config.js';
 import {
@@ -36,17 +37,16 @@ function defaultAdjust() {
 }
 
 const state = {
+  settings:     loadSettings(),
   activeVibe:   'natural',
   activePresetId: null,   // id of the active custom preset, or null for a built-in vibe
   activeLutId:  null,     // id of an active user-imported LUT, or null for the vibe's own
   config:       { ...DEFAULT_CONFIG },
   adjust:       defaultAdjust(), // core sliders (persisted)
-  jpegQuality:  0.95,
-  batchFormat:  'jpeg',   // 'jpeg' | 'tiff' (persisted)
+  jpegQuality:  0.95,  // runtime float 0-1; synced from state.settings.jpegQuality
   dateStamp:    false,    // burn the date into preview + JPEG (persisted)
   frameStamp:   false,    // burn the frame number (persisted)
   customDate:   null,     // 'YYYY-MM-DD' override, or null = EXIF/today (persisted)
-  autoWb:       true,     // per-file auto white balance (persisted)
   saturation:   1,        // global saturation (persisted)
   dateFormat:   'YYMMDD', // 'YYMMDD' | 'YYMM' (persisted)
   hasImage:     false,
@@ -86,9 +86,9 @@ const histBtn         = $('hist-btn');
 const histCanvas      = $('histogram');
 const effectsBtn      = $('effects-btn');
 const effectsPanel    = $('effects-panel');
-const exportJpegBtn   = $('export-jpeg-btn');
-const exportTiffBtn   = $('export-tiff-btn');
-const batchBtn        = $('batch-btn');
+const exportBtn       = $('export-btn');
+const batchExportBtn  = $('batch-export-btn');
+const formatPicker    = $('format-picker');
 const resetBtn        = $('reset-btn');
 const lutNameBadge    = $('lut-name-badge');
 
@@ -171,7 +171,6 @@ if ('serviceWorker' in navigator) {
 
   // Push current user settings + config into the processor.
   state._processor.setConfig(state.config);
-  state._processor.autoWbEnabled = state.autoWb;     // restored from session
   state._processor.saturation    = state.saturation;
   syncUserSettingsToProcessor();
 
@@ -223,14 +222,7 @@ function persistState() {
     activePresetId: state.activePresetId,
     activeLutId:    state.activeLutId,
     adjust:         state.adjust,
-    jpegQuality:    state.jpegQuality,
-    batchFormat:    state.batchFormat,
-    dateStamp:      state.dateStamp,
-    frameStamp:     state.frameStamp,
-    customDate:     state.customDate,
-    autoWb:         state.autoWb,
     saturation:     state.saturation,
-    dateFormat:     state.dateFormat,
   });
 }
 
@@ -243,6 +235,12 @@ function resetCurrentVibe() {
 
   syncEffectToggles();
   syncEffectSliders();
+  // Re-enable push/sat bypasses in case they were disabled
+  const pushCb = document.getElementById('fx-push');
+  const satCb  = document.getElementById('fx-sat');
+  if (pushCb) pushCb.checked = true;
+  if (satCb)  satCb.checked  = true;
+  syncFxBtnStates();
   const setCore = (p, v) => {
     const el = document.querySelector(`.slider-row[data-param="${p}"]`);
     if (el) setSliderValue(el, v);
@@ -706,7 +704,6 @@ function setEffectsOpen(open) {
 }
 
 effectsBtn?.addEventListener('click', () => setEffectsOpen(!state.effectsOpen));
-$('effects-close')?.addEventListener('click', () => setEffectsOpen(false));
 
 // ─── FX Strip ─────────────────────────────────────────────────────────────────
 
@@ -725,19 +722,27 @@ function openFxSlider(btn) {
   btn.classList.add('editing');
   $('fx-slider-area')?.classList.add('open');
   document.querySelectorAll('.fx-sa-slider').forEach(s => s.classList.remove('fx-sa-active'));
+
   const saLabel    = $('fx-sa-label');
   const saResetBtn = $('fx-sa-reset-val');
-  const dateOpts   = $('fx-date-options');
+  const saToggle   = $('fx-sa-toggle');
+  const saToggleCb = $('fx-sa-toggle-cb');
+
   if (saLabel) saLabel.textContent = btn.querySelector('.fx-btn-label')?.textContent ?? '';
-  if (btn.dataset.fx === 'datestamp') {
-    dateOpts?.removeAttribute('hidden');
-    saResetBtn?.setAttribute('hidden', '');
-  } else {
-    dateOpts?.setAttribute('hidden', '');
-    const slider = btn.dataset.slider ? document.getElementById(btn.dataset.slider) : null;
-    if (slider) { slider.classList.add('fx-sa-active'); saResetBtn?.removeAttribute('hidden'); }
-    else { saResetBtn?.setAttribute('hidden', ''); }
+
+  // Show the toggle switch only for effects that have a checkbox toggle
+  const toggleId = btn.dataset.toggle;
+  if (toggleId && saToggle && saToggleCb) {
+    const cb = document.getElementById(toggleId);
+    saToggleCb.checked = cb?.checked ?? false;
+    saToggle.removeAttribute('hidden');
+  } else if (saToggle) {
+    saToggle.setAttribute('hidden', '');
   }
+
+  const slider = btn.dataset.slider ? document.getElementById(btn.dataset.slider) : null;
+  if (slider) { slider.classList.add('fx-sa-active'); saResetBtn?.removeAttribute('hidden'); }
+  else        { saResetBtn?.setAttribute('hidden', ''); }
 }
 
 function toggleFxEffect(btn) {
@@ -748,7 +753,24 @@ function toggleFxEffect(btn) {
   cb.checked = !cb.checked;
   cb.dispatchEvent(new Event('change', { bubbles: true }));
   btn.classList.toggle('on', cb.checked);
+  // Keep the slider-area toggle in sync if this effect is currently open
+  if (btn === _fxSliderBtn) {
+    const saCb = $('fx-sa-toggle-cb');
+    if (saCb) saCb.checked = cb.checked;
+  }
 }
+
+// Slider-area toggle switch: mirrors the effect's on/off state
+$('fx-sa-toggle-cb')?.addEventListener('change', (e) => {
+  if (!_fxSliderBtn) return;
+  const toggleId = _fxSliderBtn.dataset.toggle;
+  if (!toggleId) return;
+  const cb = document.getElementById(toggleId);
+  if (!cb) return;
+  cb.checked = e.target.checked;
+  cb.dispatchEvent(new Event('change', { bubbles: true }));
+  _fxSliderBtn.classList.toggle('on', e.target.checked);
+});
 
 document.querySelectorAll('.fx-btn').forEach(btn => {
   let lpTimer = null, didLong = false, didMove = false, startX = 0, startY = 0;
@@ -758,7 +780,11 @@ document.querySelectorAll('.fx-btn').forEach(btn => {
     lpTimer = setTimeout(() => {
       if (didMove) return;
       didLong = true;
-      if (btn.dataset.slider || btn.dataset.fx === 'datestamp') openFxSlider(btn);
+      // Long press: toggle on/off for effects that have a toggle
+      if (btn.dataset.toggle) {
+        toggleFxEffect(btn);
+        if (navigator.vibrate) navigator.vibrate(30);
+      }
     }, LONG_PRESS_MS);
   });
   btn.addEventListener('pointermove', (e) => {
@@ -770,10 +796,7 @@ document.querySelectorAll('.fx-btn').forEach(btn => {
   btn.addEventListener('pointerup', () => {
     clearTimeout(lpTimer);
     if (didLong || didMove) return;
-    const hasToggle = !!btn.dataset.toggle;
-    const hasSlider = !!btn.dataset.slider || btn.dataset.fx === 'datestamp';
-    if (hasToggle) toggleFxEffect(btn);
-    else if (hasSlider) openFxSlider(btn);
+    if (btn.dataset.slider || btn.dataset.toggle) openFxSlider(btn);
   });
   btn.addEventListener('pointercancel', () => { clearTimeout(lpTimer); didMove = true; });
   btn.addEventListener('contextmenu', (e) => { e.preventDefault(); clearTimeout(lpTimer); });
@@ -788,17 +811,6 @@ $('fx-sa-reset-val')?.addEventListener('click', () => {
   handleSliderChange(slider.dataset.param, def);
 });
 
-// Date format toggle
-$('date-format-toggle')?.addEventListener('click', (e) => {
-  const btn = e.target.closest('button[data-datefmt]');
-  if (!btn) return;
-  state.dateFormat = btn.dataset.datefmt;
-  $('date-format-toggle')?.querySelectorAll('button').forEach(b => {
-    b.classList.toggle('active', b.dataset.datefmt === state.dateFormat);
-  });
-  if (state.hasImage) triggerRender(false);
-  schedulePersist();
-});
 
 function syncFxBtnStates() {
   document.querySelectorAll('.fx-btn[data-toggle]').forEach(btn => {
@@ -833,6 +845,22 @@ function syncEffectToggles() {
   syncFxBtnStates();
 }
 
+// Push bypass: toggle off → pass 0 to processor; toggle on → restore actual value.
+// The slider always shows state.adjust.push_pull_ev (unchanged by bypass).
+$('fx-push')?.addEventListener('change', (e) => {
+  if (state._processor)
+    state._processor.setSettings({ push_pull_ev: e.target.checked ? (state.adjust.push_pull_ev ?? 0) : 0 });
+  syncFxBtnStates();
+  if (state.hasImage) triggerRender();
+});
+
+// Saturation bypass: same pattern.
+$('fx-sat')?.addEventListener('change', (e) => {
+  if (state._processor) state._processor.saturation = e.target.checked ? state.saturation : 1.0;
+  syncFxBtnStates();
+  if (state.hasImage) triggerRender();
+});
+
 // ─── Sliders ──────────────────────────────────────────────────────────────────
 
 function handleSliderChange(param, value) {
@@ -850,10 +878,10 @@ function handleSliderChange(param, value) {
     bloom_strength:   'bloom_strength',
     cnr_sigma:        'cnr_sigma',
   };
-  if (param === 'jpeg_quality') { state.jpegQuality = value; schedulePersist(); return; }
   if (param === 'saturation') {
     state.saturation = value;
-    if (state._processor) state._processor.saturation = value;
+    if (state._processor && document.getElementById('fx-sat')?.checked !== false)
+      state._processor.saturation = value;
     if (state.hasImage) triggerRender();
     schedulePersist();
     return;
@@ -862,7 +890,10 @@ function handleSliderChange(param, value) {
   if (key.startsWith('_')) {
     const userKey = key.slice(1);
     state.adjust[userKey] = value;
-    if (state._processor) state._processor.setSettings({ [userKey]: value });
+    if (state._processor) {
+      const bypassed = userKey === 'push_pull_ev' && document.getElementById('fx-push')?.checked === false;
+      if (!bypassed) state._processor.setSettings({ [userKey]: value });
+    }
   } else {
     state.config[key] = value;
   }
@@ -871,6 +902,36 @@ function handleSliderChange(param, value) {
 }
 
 initSliders(document, handleSliderChange);
+
+applyVibeOrder(vibeStrip, state.settings.vibeOrder);
+
+initSettings(state, {
+  onSettingsChange(settings) {
+    if (settings.reduceMotion) document.body.classList.add('reduce-motion');
+    else document.body.classList.remove('reduce-motion');
+    applyTheme(settings.theme ?? 'dark');
+    if (typeof settings.jpegQuality === 'number') {
+      state.jpegQuality = settings.jpegQuality / 100;
+    }
+    state.dateStamp  = !!settings.dateStamp;
+    state.frameStamp = !!settings.frameStamp;
+    state.dateFormat = settings.dateFormat  ?? 'YYMMDD';
+    state.customDate = settings.customDate  ?? null;
+    if (state.hasImage) triggerRender(false);
+  },
+  onVibeOrderChange(order) {
+    applyVibeOrder(vibeStrip, order);
+  },
+});
+// Init jpegQuality and stamp state from settings
+state.jpegQuality = (state.settings.jpegQuality ?? 95) / 100;
+state.dateStamp  = !!state.settings.dateStamp;
+state.frameStamp = !!state.settings.frameStamp;
+state.dateFormat = state.settings.dateFormat ?? 'YYMMDD';
+state.customDate = state.settings.customDate ?? null;
+
+if (state.settings.reduceMotion) document.body.classList.add('reduce-motion');
+applyTheme(state.settings.theme ?? 'dark');
 
 function syncEffectSliders() {
   const paramToConfig = {
@@ -885,9 +946,18 @@ function syncEffectSliders() {
   document.querySelectorAll('.slider-mini, .slider-row').forEach((el) => {
     const param = el.dataset.param;
     if (param && param in paramToConfig) {
-      setSliderValue(el, paramToConfig[param]);
+      const v = paramToConfig[param];
+      setSliderValue(el, v);
+      el.dataset.default = String(v);
     }
   });
+  // Push/Pull lives in state.adjust, not config
+  const pushEl = document.getElementById('fx-sm-push');
+  if (pushEl) {
+    const pv = state.adjust.push_pull_ev ?? 0;
+    setSliderValue(pushEl, pv);
+    pushEl.dataset.default = String(pv);
+  }
 }
 
 // ─── Zen Mode ─────────────────────────────────────────────────────────────────
@@ -991,6 +1061,7 @@ canvas?.addEventListener('touchmove', (e) => {
     if (zoom.scale === 1) { zoom.tx = 0; zoom.ty = 0; }
     _moved = true;
     applyZoom();
+    if (zoom.scale > 1.01) enterZen();
     e.preventDefault();
   } else if (e.touches.length === 1 && zoom.scale > 1) {
     zoom.tx = _panTx + (e.touches[0].clientX - _panX);
@@ -1029,8 +1100,15 @@ document.addEventListener('touchend', (e) => {
 function toggleZen() {
   state.isZen = !state.isZen;
   document.body.classList.toggle('zen', state.isZen);
-  // The bars leave the layout in zen, so the canvas region changes size —
-  // repaint at the new size on the next frame (after layout settles).
+  requestAnimationFrame(() => {
+    if (state.hasImage && state.processorReady) triggerRender(false);
+  });
+}
+
+function enterZen() {
+  if (state.isZen) return;
+  state.isZen = true;
+  document.body.classList.add('zen');
   requestAnimationFrame(() => {
     if (state.hasImage && state.processorReady) triggerRender(false);
   });
@@ -1097,23 +1175,8 @@ $('rotate-left-btn')?.addEventListener('click', () => {
   triggerRender(false);
 });
 
-// Auto white balance toggle (per-file, from the DNG's AsShotNeutral). Toggling
-// re-balances the image (re-preprocess from the kept raw pixels), not just a
-// re-render — the white balance lives in the colour matrix.
-$('fx-autowb')?.addEventListener('change', async (e) => {
-  state.autoWb = e.target.checked;
-  schedulePersist();
-  if (!state._processor) return;
-  state._processor.autoWbEnabled = state.autoWb;
-  if (!state.hasImage) return;
-  try {
-    const img = await state._processor.applyAutoWb();
-    if (img) await drawToCanvas(img);
-  } catch (err) { console.error('[app] auto-WB toggle failed:', err); }
-});
-
 // Date stamp toggle + frame-number toggle (burn into preview + JPEG exports).
-const dateInput = $('date-input');
+const dateInput = $('settings-date-input');
 function refreshStampBadges() {
   // The date chip is a real <input type="date"> — show the effective date so
   // tapping it opens the native picker pre-filled.
@@ -1123,30 +1186,14 @@ function refreshStampBadges() {
   }
   const fb = $('frame-badge'); if (fb) fb.textContent = state.hasImage ? frameStampText() : '—';
 }
-$('fx-datestamp')?.addEventListener('change', (e) => {
-  state.dateStamp = e.target.checked;
-  refreshStampBadges();
-  if (state.hasImage) triggerRender(false);
-  schedulePersist();
-});
-$('fx-framestamp')?.addEventListener('change', (e) => {
-  state.frameStamp = e.target.checked;
-  refreshStampBadges();
-  if (state.hasImage) triggerRender(false);
-  schedulePersist();
-});
 
 // The date chip opens the native iOS picker on tap (a visible date input, not
 // a hidden one + showPicker() — that silently no-ops in a standalone PWA).
 dateInput?.addEventListener('change', () => {
   state.customDate = dateInput.value || null;
-  if (state.customDate && !state.dateStamp) {   // setting a date implies wanting it
-    state.dateStamp = true;
-    const t = $('fx-datestamp'); if (t) t.checked = true;
-    syncFxBtnStates();
-  }
+  state.settings.customDate = state.customDate;
+  saveSettings(state.settings);
   if (state.hasImage) triggerRender(false);
-  schedulePersist();
 });
 
 // ─── File Open ────────────────────────────────────────────────────────────────
@@ -1270,7 +1317,11 @@ function renderPhotoStrip() {
     const vid = state._perImage[i]?.vibeId ?? state.activeVibe;
     badge.textContent = VIBE_ABBR[vid] ?? vid.slice(0, 2).toUpperCase();
     btn.appendChild(badge);
-    btn.addEventListener('click', () => selectPhoto(i));
+    let _suppressSelect = false;
+    btn.addEventListener('click', () => {
+      if (_suppressSelect) { _suppressSelect = false; return; }
+      selectPhoto(i);
+    });
     // Long-press → toggle exclude/include from batch
     // Swipe up → drag animation + floating confirmation dialog to remove
     let _pressTimer = null, _tStartX = 0, _tStartY = 0, _tMoved = false, _tDragging = false;
@@ -1286,7 +1337,7 @@ function renderPhotoStrip() {
       _tMoved = false; _tDragging = false;
       btn.style.transition = 'none';
       _pressTimer = setTimeout(() => {
-        if (!_tMoved) { toggleExcluded(i); if (navigator.vibrate) navigator.vibrate(8); }
+        if (!_tMoved) { _suppressSelect = true; toggleExcluded(i); if (navigator.vibrate) navigator.vibrate(8); }
       }, 600);
     }, { passive: true });
     btn.addEventListener('touchmove', (e) => {
@@ -1765,8 +1816,7 @@ function transitionToEditor(filename) {
   setFilename(filename);
   updateFilePos();
   refreshStampBadges();
-  exportJpegBtn.disabled = false;
-  exportTiffBtn.disabled = false;
+  if (exportBtn) exportBtn.disabled = false;
 }
 
 // ─── Placeholder canvas draw (Phase 1) ───────────────────────────────────────
@@ -1875,45 +1925,87 @@ async function saveFiles(files) {
   return Boolean(ok);
 }
 
-exportJpegBtn?.addEventListener('click', async () => {
-  if (!state.hasImage || !state.processorReady || _exporting) return;
-  _exporting = true;
-  try {
-    showLoading('Developing JPEG…');
-    const img = await renderForExport();
-    if (!img) { hideLoading(); showToast('Export failed', 3000, true); return; }
-    const cropped = applyCropStraighten(img);
-    const file = await encodeJpegFile(stampImageData(cropped), withVibe(filenameDisplay.title), state.jpegQuality);
-    hideLoading();
-    if (await saveFiles([file])) exportSavedToast('JPEG', cropped.width, cropped.height);
-  } catch (err) {
-    hideLoading();
-    console.error('[app] JPEG export error:', err);
-    showToast(`Export failed — ${err.message ?? 'unknown error'}`, 4000, true);
-  } finally {
-    _exporting = false;
-  }
+// ── Format picker (long-press Export / Batch Export) ─────────────────────────
+// One-shot: picks a format and fires the export immediately, no settings change.
+let _formatPickerTarget = null;
+
+function showFormatPicker(target) {
+  _formatPickerTarget = target;
+  formatPicker?.classList.add('open');
+}
+function hideFormatPicker() {
+  formatPicker?.classList.remove('open');
+  _formatPickerTarget = null;
+}
+
+formatPicker?.addEventListener('click', e => {
+  const btn = e.target.closest('button[data-fmt]');
+  if (!btn) return;
+  const fmt    = btn.dataset.fmt;
+  const target = _formatPickerTarget;
+  hideFormatPicker();
+  if (target === 'batch') runBatch(fmt);
+  else                    doExport(fmt);
 });
 
-exportTiffBtn?.addEventListener('click', async () => {
+document.addEventListener('pointerdown', e => {
+  if (formatPicker?.classList.contains('open') &&
+      !formatPicker.contains(e.target) &&
+      e.target !== exportBtn && e.target !== batchExportBtn) {
+    hideFormatPicker();
+  }
+}, true);
+
+// ── Unified export function ───────────────────────────────────────────────────
+async function doExport(format) {
   if (!state.hasImage || !state.processorReady || _exporting) return;
   _exporting = true;
-  try {
-    showLoading('Developing 16-bit TIFF…');
-    let out = await renderForExport({ raw: true });
-    if (!out) { hideLoading(); showToast('Export failed', 3000, true); return; }
-    out = applyCropStraightenFloat(out);
-    const file = encodeTiffFile(out.rgb, out.width, out.height, withVibe(filenameDisplay.title));
-    hideLoading();
-    if (await saveFiles([file])) exportSavedToast('TIFF (16-bit)', out.width, out.height);
-  } catch (err) {
-    hideLoading();
-    console.error('[app] TIFF export error:', err);
-    showToast(`Export failed — ${err.message ?? 'unknown error'}`, 4000, true);
-  } finally {
-    _exporting = false;
+  if (format === 'tiff') {
+    try {
+      showLoading('Developing 16-bit TIFF…');
+      let out = await renderForExport({ raw: true });
+      if (!out) { hideLoading(); showToast('Export failed', 3000, true); return; }
+      out = applyCropStraightenFloat(out);
+      const file = encodeTiffFile(out.rgb, out.width, out.height, withVibe(filenameDisplay.title));
+      hideLoading();
+      if (await saveFiles([file])) exportSavedToast('TIFF (16-bit)', out.width, out.height);
+    } catch (err) {
+      hideLoading();
+      console.error('[app] TIFF export error:', err);
+      showToast(`Export failed — ${err.message ?? 'unknown error'}`, 4000, true);
+    } finally { _exporting = false; }
+  } else {
+    try {
+      showLoading('Developing JPEG…');
+      const img = await renderForExport();
+      if (!img) { hideLoading(); showToast('Export failed', 3000, true); return; }
+      const cropped = applyCropStraighten(img);
+      const file = await encodeJpegFile(stampImageData(cropped), withVibe(filenameDisplay.title), state.jpegQuality);
+      hideLoading();
+      if (await saveFiles([file])) exportSavedToast('JPEG', cropped.width, cropped.height);
+    } catch (err) {
+      hideLoading();
+      console.error('[app] JPEG export error:', err);
+      showToast(`Export failed — ${err.message ?? 'unknown error'}`, 4000, true);
+    } finally { _exporting = false; }
   }
-});
+}
+
+// ── Long-press helper ─────────────────────────────────────────────────────────
+function addLongPress(el, onLong, onClick) {
+  if (!el) return;
+  let timer = null, fired = false;
+  el.addEventListener('pointerdown', () => {
+    fired = false;
+    timer = setTimeout(() => { fired = true; onLong(); }, 500);
+  });
+  el.addEventListener('pointerup',     () => clearTimeout(timer));
+  el.addEventListener('pointercancel', () => clearTimeout(timer));
+  el.addEventListener('click', () => { if (!fired) onClick(); fired = false; });
+}
+
+addLongPress(exportBtn,      () => showFormatPicker('single'), () => doExport(state.settings.exportFormat));
+addLongPress(batchExportBtn, () => showFormatPicker('batch'),  () => runBatch());
 
 // ─── Batch Export ───────────────────────────────────────────────────────────
 // Develops every file in the current selection through the active vibe/settings
@@ -1924,10 +2016,10 @@ exportTiffBtn?.addEventListener('click', async () => {
 /** Show/hide the multi-photo controls (batch, apply-to-all) per queue size. */
 function updateBatchButton() {
   const n = state._queue?.length ?? 0;
-  if (batchBtn) {
+  if (batchExportBtn) {
     const excl = state._excluded?.size ?? 0;
-    batchBtn.textContent = excl > 0 ? `Batch ${n - excl}/${n}` : `Batch ×${n}`;
-    batchBtn.classList.toggle('hidden', n < 2);
+    batchExportBtn.textContent = excl > 0 ? `Batch ${n - excl}/${n}` : `Batch ×${n}`;
+    batchExportBtn.classList.toggle('hidden', n < 2);
   }
   $('apply-all-btn')?.toggleAttribute('disabled', n < 2);
 }
@@ -1951,22 +2043,6 @@ $('apply-all-btn')?.addEventListener('click', () => {
   showToast(`Profile + adjustments applied to all ${n} photos`);
 });
 
-// Batch export format toggle (JPEG / 16-bit TIFF), persisted with the session.
-const batchFormatEl = $('batch-format');
-function syncBatchFormatUI() {
-  batchFormatEl?.querySelectorAll('button[data-fmt]').forEach((b) => {
-    const on = b.dataset.fmt === state.batchFormat;
-    b.classList.toggle('active', on);
-    b.setAttribute('aria-pressed', String(on));
-  });
-}
-batchFormatEl?.addEventListener('click', (e) => {
-  const btn = e.target.closest('button[data-fmt]');
-  if (!btn) return;
-  state.batchFormat = btn.dataset.fmt;
-  syncBatchFormatUI();
-  schedulePersist();
-});
 
 // Export progress overlay (used by batch). Cancellable between files.
 let _cancelBatch = false;
@@ -1986,7 +2062,7 @@ function setProgress(done, total, sub) {
 function hideProgress() { progressOverlay?.classList.add('hidden'); }
 progressCancel?.addEventListener('click', () => { _cancelBatch = true; progressCancel.textContent = 'Cancelling…'; });
 
-async function runBatch() {
+async function runBatch(overrideFormat) {
   if (_exporting) return;
   const files = state._queue ?? [];
   if (files.length < 2) return;
@@ -2031,7 +2107,8 @@ async function runBatch() {
         const turns = (((per?.rotation ?? 0) % 4) + 4) % 4;
         for (let t = 0; t < turns; t++) state._processor.rotateClockwise();
         lastDone = i;
-        if (state.batchFormat === 'tiff') {
+        const batchFmt = overrideFormat ?? state.settings.batchExportFormat;
+        if (batchFmt === 'tiff') {
           let out = await renderForExport({ raw: true });
           if (!out) throw new Error('render returned null');
           out = applyCropStraightenFloat(out);
@@ -2074,7 +2151,7 @@ async function runBatch() {
     _exporting = false;
   }
   const cancelled = _cancelBatch;
-  const fmt = state.batchFormat === 'tiff' ? 'TIFF' : 'JPEG';
+  const fmt = (overrideFormat ?? state.settings.batchExportFormat) === 'tiff' ? 'TIFF' : 'JPEG';
   const n = outFiles.length;
   showToast(
     !n               ? 'Batch produced no files'
@@ -2087,7 +2164,6 @@ async function runBatch() {
   );
 }
 
-batchBtn?.addEventListener('click', runBatch);
 resetBtn?.addEventListener('click', resetCurrentVibe);
 
 // ─── Loading Helpers ──────────────────────────────────────────────────────────
@@ -2249,7 +2325,8 @@ function drawSevenSeg(ctx, text, align, anchorX, top, H) {
   ctx.translate(0, -top);
   // On the Monochrome look the stamp should read neutral, not amber.
   const mono = state.activeVibe === 'monochrome';
-  ctx.fillStyle = mono ? '#dcdcdc' : '#c8823c';   // neutral grey vs muted amber
+  const _stampColorMap = { amber: '#c8823c', silver: '#9e9e9e', white: '#ebebeb', black: '#1a1a1a' };
+  ctx.fillStyle = mono ? '#dcdcdc' : (_stampColorMap[state.settings.stampColor] ?? '#c8823c');
   ctx.shadowColor = mono ? 'rgba(120,120,120,0.25)' : 'rgba(210, 130, 60, 0.28)';
   ctx.shadowBlur = H * 0.14;               // softer glow
   let x = startX;
@@ -2642,42 +2719,10 @@ if (_session?.adjust && typeof _session.adjust === 'object') {
   setCore('wb_temp',  state.adjust.wb_temp);
   setCore('tint',     state.adjust.tint);
 }
-if (_session && typeof _session.jpegQuality === 'number') {
-  state.jpegQuality = Math.min(1, Math.max(0.7, _session.jpegQuality));
-  const qEl = document.querySelector('.slider-mini[data-param="jpeg_quality"]');
-  if (qEl) setSliderValue(qEl, state.jpegQuality);
-}
-if (_session?.batchFormat === 'tiff' || _session?.batchFormat === 'jpeg') {
-  state.batchFormat = _session.batchFormat;
-}
-if (_session?.dateStamp) {
-  state.dateStamp = true;
-  const dsToggle = $('fx-datestamp');
-  if (dsToggle) dsToggle.checked = true;
-}
-if (_session?.frameStamp) {
-  state.frameStamp = true;
-  const fsToggle = $('fx-framestamp');
-  if (fsToggle) fsToggle.checked = true;
-}
-if (typeof _session?.customDate === 'string') {
-  state.customDate = _session.customDate;
-  const di = $('date-input'); if (di) di.value = state.customDate;
-}
-if (_session?.autoWb === false) {
-  state.autoWb = false;
-  const t = $('fx-autowb'); if (t) t.checked = false;
-}
 if (typeof _session?.saturation === 'number') {
   state.saturation = Math.min(2, Math.max(0, _session.saturation));
   const satEl = document.querySelector('.slider-mini[data-param="saturation"]');
   if (satEl) setSliderValue(satEl, state.saturation);
-}
-if (_session?.dateFormat === 'YYMM' || _session?.dateFormat === 'YYMMDD') {
-  state.dateFormat = _session.dateFormat;
-  $('date-format-toggle')?.querySelectorAll('button').forEach(b => {
-    b.classList.toggle('active', b.dataset.datefmt === state.dateFormat);
-  });
 }
 syncFxBtnStates();
 
@@ -2710,12 +2755,10 @@ renderLutPills().then(async () => {
   }
 });
 
-// Disable export buttons until image loaded
-exportJpegBtn.disabled = true;
-exportTiffBtn.disabled = true;
+// Disable export button until image loaded
+if (exportBtn) exportBtn.disabled = true;
 
 showResumeIfAvailable();
-syncBatchFormatUI();
 
 // Show the build stamp on the empty state so a deploy can be confirmed synced.
 const buildId = (typeof __BUILD_ID__ !== 'undefined') ? __BUILD_ID__ : 'dev';

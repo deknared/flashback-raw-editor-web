@@ -239,7 +239,7 @@ export const SOFTNESS_SIGMA           = 0.5;
 
 export const GRAIN_STRENGTH           = 0.01;
 export const GRAIN_BLUR_SIGMA         = 0.1;
-export const GRAIN_TILE_SCALE         = 0.8;
+export const GRAIN_TILE_SCALE         = 1.3;
 export const GRAIN_HIGHLIGHT_BIAS     = 0.3;
 
 export const SHARPEN_STRENGTH         = 0.5;
@@ -324,98 +324,118 @@ export const VIBE_PRESETS = {
     lut:            null,
   },
   disposable: {
-    label:          'Disposable',
-    enable_ca:      true,
-    ca_strength:    0.0077,  // ca_pixels=8 @ half-size long_edge 2072: 8/(2072/2)=0.0077
-    softness:       0.30,
-    sharpness:      2.00,    // sharpness_pct=200 → 200/100=2.0
-    sharpen_radius: 0.5,
-    grain:          1.20,    // grain_pct=120 → 120/100=1.2
-    vignette:       0.10,
-    vignette_feather: 0.40,  // vignette_curve=66 → 2^(-66/50)=0.40
-    bloom:          0.15,
-    lut:            '/assets/luts/disposable.cube',
-    base_push_ev:   0,
-    b_push_boost:   0,
+    label:             'Disposable',
+    enable_ca:         true,
+    ca_strength:       0.0077,  // ca_pixels=8 @ half-size long_edge 2072: 8/(2072/2)=0.0077
+    softness:          0.30,
+    sharpness:         2.00,    // sharpness_pct=200 → 200/100=2.0
+    sharpen_radius:    0.5,
+    grain:             1.20,    // grain_pct=120 → 120/100=1.2
+    vignette:          0.10,
+    vignette_feather:  0.40,    // vignette_curve=66 → 2^(-66/50)=0.40
+    bloom:             0.15,
+    halation_strength: 0.40,
+    lut:               '/assets/luts/disposable.cube',
+    base_push_ev:      0,
+    b_push_boost:      0,
   },
   point_shoot: {
-    label:          'Point & Shoot',
-    enable_ca:      true,
-    ca_strength:    0.0019,  // ca_pixels=2 @ half-size long_edge 2072: 2/(2072/2)=0.0019
-    softness:       0.30,
-    sharpness:      0.50,    // sharpness_pct=50 → 50/100=0.5
-    sharpen_radius: 1.0,
-    grain:          0.80,    // grain_pct=80 → 80/100=0.8
-    vignette:       0.10,
-    vignette_feather: 1.00,  // vignette_curve=0 → neutral
-    bloom:          0.10,
-    lut:            '/assets/luts/pointandshoot.cube',
-    base_push_ev:   0,
-    b_push_boost:   0,
+    label:             'Point & Shoot',
+    enable_ca:         true,
+    ca_strength:       0.0019,  // ca_pixels=2 @ half-size long_edge 2072: 2/(2072/2)=0.0019
+    softness:          0.30,
+    sharpness:         0.50,    // sharpness_pct=50 → 50/100=0.5
+    sharpen_radius:    1.0,
+    grain:             0.80,    // grain_pct=80 → 80/100=0.8
+    vignette:          0.10,
+    vignette_feather:  1.00,    // vignette_curve=0 → neutral
+    bloom:             0.10,
+    halation_strength: 0.30,
+    lut:               '/assets/luts/pointandshoot.cube',
+    base_push_ev:      0,
+    b_push_boost:      0,
   },
   rangefinder: {
-    label:          'Rangefinder',
-    enable_ca:      false,
-    ca_strength:    0,
-    softness:       0.10,
-    sharpness:      0.80,    // sharpness_pct=80 → 80/100=0.8
-    sharpen_radius: 1.0,
-    grain:          0.50,    // grain_pct=50 → 50/100=0.5
-    vignette:       0.050,   // vignette_pct=5 → 5/100=0.05
-    vignette_feather: 1.00,
-    bloom:          0.050,
-    lut:            '/assets/luts/rangefinder.cube',
-    base_push_ev:   0,
-    b_push_boost:   0,
+    label:             'Rangefinder',
+    enable_ca:         false,
+    ca_strength:       0,
+    softness:          0.10,
+    sharpness:         0.80,    // sharpness_pct=80 → 80/100=0.8
+    sharpen_radius:    1.0,
+    grain:             0.50,    // grain_pct=50 → 50/100=0.5
+    vignette:          0.050,   // vignette_pct=5 → 5/100=0.05
+    vignette_feather:  1.00,
+    bloom:             0.050,
+    halation_strength: 0.20,
+    lut:               '/assets/luts/rangefinder.cube',
+    base_push_ev:      0,
+    b_push_boost:      0,
   },
   monochrome: {
-    label:          'Monochrome',
-    enable_ca:      false,
-    ca_strength:    0,
-    softness:       0.10,
-    sharpness:      0.80,
-    sharpen_radius: 1.0,
-    grain:          1.50,
-    vignette:       0.20,
-    vignette_feather: 1.00,
-    bloom:          0.050,
-    lut:            '/assets/luts/monochrome.cube',
-    base_push_ev:   0,
+    label:             'Monochrome',
+    enable_ca:         false,
+    ca_strength:       0,
+    softness:          0.10,
+    sharpness:         0.80,
+    sharpen_radius:    1.0,
+    grain:             1.50,
+    vignette:          0.20,
+    vignette_feather:  1.00,
+    bloom:             0.050,
+    halation_strength: 0.15,
+    lut:               '/assets/luts/monochrome.cube',
+    base_push_ev:      0,
   },
   flashback_v1: {
-    label:          'Flashback V1',
-    enable_ca:      true,
-    ca_strength:    0.0048,  // ca_pixels=5 @ half-size long_edge 2072: 5/(2072/2)=0.0048
-    softness:       0.30,
-    sharpness:      0.80,
-    sharpen_radius: 0.5,
-    grain:          2.00,    // grain_pct=200 → 200/100=2.0
-    vignette:       0.10,
-    vignette_feather: 0.40,  // vignette_curve=66 → 2^(-66/50)=0.40
-    bloom:          0.030,
-    lut:            '/assets/luts/V1.cube',
+    label:             'Flashback V1',
+    enable_ca:         true,
+    ca_strength:       0.0048,  // ca_pixels=5 @ half-size long_edge 2072: 5/(2072/2)=0.0048
+    softness:          0.30,
+    sharpness:         0.80,
+    sharpen_radius:    0.5,
+    grain:             2.00,    // grain_pct=200 → 200/100=2.0
+    vignette:          0.10,
+    vignette_feather:  0.40,    // vignette_curve=66 → 2^(-66/50)=0.40
+    bloom:             0.030,
+    halation_strength: 0.35,
+    lut:               '/assets/luts/V1.cube',
     // The V1 look's LUT is trained WITHOUT the +2 EV lift the other looks use
     // (upstream flashback_classic_v1 sets base_exposure_offset_v2 = 0).
-    base_lift_ev:   0,
-    base_push_ev:   0,
-    b_push_boost:   0,
+    base_lift_ev:      0,
+    base_push_ev:      0,
+    b_push_boost:      0,
   },
 
-  // Procedural look (generated in core/procedural-luts.js, not a .cube file) —
-  // an original interpretation of a popular film/era look. Runs the full film
-  // pipeline (LUT path), so effects/grain apply like any other vibe.
+  // Procedural looks (generated in core/procedural-luts.js, not .cube files).
+  // Run the full film pipeline so effects/grain apply like any other vibe.
   reddispo: {
-    label:          'Gold',
-    enable_ca:      true,
-    ca_strength:    0.008,
-    softness:       0.5,
-    sharpness:      1.5,
-    sharpen_radius: 0.5,
-    grain:          1.1,
-    vignette:       0.12,
-    vignette_feather: 0.4,
-    bloom:          0.10,
-    lut:            'proc:reddispo',
+    label:             'Gold',
+    enable_ca:         true,
+    ca_strength:       0.008,
+    softness:          0.5,
+    sharpness:         1.5,
+    sharpen_radius:    0.5,
+    grain:             1.1,
+    vignette:          0.12,
+    vignette_feather:  0.4,
+    bloom:             0.10,
+    halation_strength: 0.30,
+    lut:               'proc:reddispo',
+  },
+  superia: {
+    label:             'Expired Superia',
+    enable_ca:         true,
+    ca_strength:       0.002,
+    softness:          0.35,
+    sharpness:         1.45,
+    sharpen_radius:    1.0,
+    grain:             1.5,
+    vignette:          0.45,
+    vignette_feather:  1.0,
+    bloom:             0.10,
+    halation_strength: 0.25,
+    base_push_ev:      -1,
+    lut:               'proc:superia',
   },
 };
 
@@ -520,19 +540,20 @@ export function factoryStateFor(vibeId) {
   const state = {
     ...DEFAULT_CONFIG,
     enable_chromatic_aberration: preset.enable_ca,
-    ca_strength:      preset.ca_strength,
-    softness_sigma:   preset.softness,
-    sharpen_strength: preset.sharpness,
-    sharpen_radius:   preset.sharpen_radius,
-    grain_strength:   preset.grain,
+    ca_strength:       preset.ca_strength,
+    softness_sigma:    preset.softness,
+    sharpen_strength:  preset.sharpness,
+    sharpen_radius:    preset.sharpen_radius,
+    grain_strength:    preset.grain,
     vignette_strength: preset.vignette,
-    vignette_feather: preset.vignette_feather ?? 1.0,
+    vignette_feather:  preset.vignette_feather ?? 1.0,
     vignette_color_shift: preset.vignette_color_shift ?? VIGNETTE_COLOR_SHIFT,
-    bloom_strength:   preset.bloom,
-    base_lift_ev:     preset.base_lift_ev ?? RENDER_LIFT_EV,
-    base_push_ev:     preset.base_push_ev ?? 0,
-    b_push_boost:     preset.b_push_boost ?? 0,
-    lut_path:         preset.lut,
+    bloom_strength:    preset.bloom,
+    halation_strength: preset.halation_strength ?? HALATION_STRENGTH,
+    base_lift_ev:      preset.base_lift_ev ?? RENDER_LIFT_EV,
+    base_push_ev:      preset.base_push_ev ?? 0,
+    b_push_boost:      preset.b_push_boost ?? 0,
+    lut_path:          preset.lut,
     // Post-LUT display calibration (not user-adjustable; see DISPLAY_CAL).
     display_cal_r:    cal[0],
     display_cal_g:    cal[1],

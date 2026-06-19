@@ -144,6 +144,12 @@
           <line x1="3" y1="21" x2="10" y2="14"/>
         </svg>
       </button>
+      <button id="settings-btn" class="icon-btn" aria-label="Settings" title="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06-.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
     </div>
   </header>
 
@@ -170,18 +176,20 @@
     <!-- Everything below the strip; the effects panel covers exactly this. -->
     <div id="controls-stack">
 
+    <!-- Format picker sheet (long-press export) -->
+    <div id="format-picker" class="format-picker">
+      <button type="button" data-fmt="jpeg">JPEG</button>
+      <button type="button" data-fmt="tiff">TIFF 16-bit</button>
+    </div>
+
     <!-- Effects panel (overlay over the controls, never the photo) -->
     <div id="effects-panel" aria-label="Film effects">
       <div class="fx-head">
         <span class="fx-head-title">Effects</span>
         <div class="fx-head-actions">
-          <button id="reset-btn" class="fx-icon-btn" type="button" aria-label="Reset adjustments" title="Reset adjustments">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="1 4 1 10 7 10"/>
-              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
-            </svg>
-          </button>
-          <button id="effects-close" class="fx-icon-btn" type="button" aria-label="Close effects">✕</button>
+          <button id="reset-btn" class="fx-action-btn" type="button" aria-label="Reset adjustments" title="Reset adjustments">Reset All</button>
+          <button id="apply-all-btn" class="fx-action-btn" type="button" disabled
+                  title="Load 2+ photos to copy EXP/WB/tint across the whole roll">Apply All</button>
         </div>
       </div>
 
@@ -189,15 +197,14 @@
       <div id="fx-slider-area">
         <div class="fx-sa-head">
           <span id="fx-sa-label" class="fx-sa-name"></span>
+          <label class="settings-switch fx-sa-toggle" id="fx-sa-toggle" hidden aria-label="Toggle effect">
+            <input type="checkbox" id="fx-sa-toggle-cb">
+            <span class="settings-switch-track"></span>
+          </label>
           <button id="fx-sa-reset-val" class="fx-sa-reset-btn" type="button" aria-label="Reset to default" hidden>↺</button>
         </div>
-        <div id="fx-date-options" hidden>
-          <div class="seg-toggle" id="date-format-toggle" role="group" aria-label="Date format">
-            <button type="button" data-datefmt="YYMMDD" class="active">'YY MM DD</button>
-            <button type="button" data-datefmt="YYMM">'YY MM</button>
-          </div>
-          <input type="date" id="date-input" class="date-chip" aria-label="Stamp date">
-        </div>
+
+        <div class="slider-mini fx-sa-slider" id="fx-sm-push"       data-param="push_pull"        data-min="-2"  data-max="2"    data-step="0.1"   data-value="0"    ><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">0.0</span></div>
         <div class="slider-mini fx-sa-slider" id="fx-sm-grain"      data-param="grain_strength"   data-min="0"   data-max="3"    data-step="0.05"  data-value="0.8"  ><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">0.8</span></div>
         <div class="slider-mini fx-sa-slider" id="fx-sm-halation"   data-param="halation_strength" data-min="0"   data-max="1"    data-step="0.05"  data-value="0.5"  ><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">0.5</span></div>
         <div class="slider-mini fx-sa-slider" id="fx-sm-ca"         data-param="ca_strength"       data-min="0"   data-max="0.03" data-step="0.001" data-value="0.005"><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">0.005</span></div>
@@ -207,73 +214,71 @@
         <div class="slider-mini fx-sa-slider" id="fx-sm-bloom"      data-param="bloom_strength"    data-min="0"   data-max="1"    data-step="0.05"  data-value="0.3"  ><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">0.3</span></div>
         <div class="slider-mini fx-sa-slider" id="fx-sm-saturation" data-param="saturation"        data-min="0"   data-max="2"    data-step="0.02"  data-value="1"    ><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">1.00</span></div>
         <div class="slider-mini fx-sa-slider" id="fx-sm-cnr"        data-param="cnr_sigma"         data-min="0"   data-max="4"    data-step="0.1"   data-value="2"    ><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">2.0</span></div>
-        <div class="slider-mini fx-sa-slider" id="fx-sm-quality"    data-param="jpeg_quality"      data-min="0.7" data-max="1"    data-step="0.01"  data-value="0.95" ><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">0.95</span></div>
       </div>
 
       <!-- Horizontal icon strip -->
       <div id="fx-strip" role="toolbar" aria-label="Effect controls">
+        <button class="fx-btn on" type="button" data-fx="push_pull" data-slider="fx-sm-push" data-toggle="fx-push" aria-label="Push/Pull">
+          <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="3" x2="12" y2="10"/><polyline points="9 6 12 3 15 6"/><line x1="12" y1="21" x2="12" y2="14"/><polyline points="15 18 12 21 9 18"/></svg>
+          <span class="fx-btn-label">Push</span>
+          <span class="fx-btn-dot" aria-hidden="true"></span>
+        </button>
         <button class="fx-btn on" type="button" data-fx="grain"      data-slider="fx-sm-grain"      data-toggle="fx-grain"      aria-label="Grain">
           <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="7" cy="7" r="1.5"/><circle cx="15" cy="5" r="1.5"/><circle cx="19" cy="11" r="1.5"/><circle cx="5" cy="15" r="1.5"/><circle cx="12" cy="13" r="1.5"/><circle cx="18" cy="18" r="1.5"/><circle cx="9" cy="20" r="1.5"/><circle cx="14" cy="20" r="1"/></svg>
           <span class="fx-btn-label">Grain</span>
+          <span class="fx-btn-dot" aria-hidden="true"></span>
         </button>
-        <button class="fx-btn on" type="button" data-fx="halation"   data-slider="fx-sm-halation"   data-toggle="fx-halation"   aria-label="Halation">
+        <button class="fx-btn" type="button" data-fx="halation"   data-slider="fx-sm-halation"   data-toggle="fx-halation"   aria-label="Halation">
           <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="currentColor" opacity="0.85"/><circle cx="12" cy="12" r="6.5" stroke="currentColor" stroke-width="1.5" opacity="0.5"/><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1" opacity="0.25"/></svg>
           <span class="fx-btn-label">Halation</span>
+          <span class="fx-btn-dot" aria-hidden="true"></span>
         </button>
         <button class="fx-btn on" type="button" data-fx="ca"         data-slider="fx-sm-ca"         data-toggle="fx-ca"         aria-label="Chromatic Aberration">
           <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="10" cy="12" r="5.5"/><circle cx="14" cy="12" r="5.5" opacity="0.45"/></svg>
           <span class="fx-btn-label">Chrom.Ab.</span>
+          <span class="fx-btn-dot" aria-hidden="true"></span>
         </button>
         <button class="fx-btn on" type="button" data-fx="softness"   data-slider="fx-sm-softness"   data-toggle="fx-softness"   aria-label="Softness">
           <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="4.5" stroke-width="1.8"/><circle cx="12" cy="12" r="8.5" stroke-width="1" stroke-dasharray="2.5 2" opacity="0.5"/></svg>
           <span class="fx-btn-label">Softness</span>
+          <span class="fx-btn-dot" aria-hidden="true"></span>
         </button>
         <button class="fx-btn on" type="button" data-fx="sharpen"    data-slider="fx-sm-sharpen"    data-toggle="fx-sharpen"    aria-label="Sharpen">
           <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><polygon points="12,3 21,12 12,21 3,12"/><polygon points="12,8 16,12 12,16 8,12" fill="currentColor" stroke="none" opacity="0.5"/></svg>
           <span class="fx-btn-label">Sharpen</span>
+          <span class="fx-btn-dot" aria-hidden="true"></span>
         </button>
         <button class="fx-btn on" type="button" data-fx="vignette"   data-slider="fx-sm-vignette"   data-toggle="fx-vignette"   aria-label="Vignette">
           <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2.5" y="2.5" width="19" height="19" rx="2.5" stroke="currentColor" stroke-width="1.5"/><rect x="6.5" y="6.5" width="11" height="11" rx="1.5" fill="currentColor" opacity="0.35"/></svg>
           <span class="fx-btn-label">Vignette</span>
+          <span class="fx-btn-dot" aria-hidden="true"></span>
         </button>
         <button class="fx-btn on" type="button" data-fx="bloom"      data-slider="fx-sm-bloom"      data-toggle="fx-bloom"      aria-label="Bloom">
           <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/><line x1="12" y1="3" x2="12" y2="6.5"/><line x1="12" y1="17.5" x2="12" y2="21"/><line x1="3" y1="12" x2="6.5" y2="12"/><line x1="17.5" y1="12" x2="21" y2="12"/><line x1="5.6" y1="5.6" x2="7.9" y2="7.9"/><line x1="16.1" y1="16.1" x2="18.4" y2="18.4"/><line x1="18.4" y1="5.6" x2="16.1" y2="7.9"/><line x1="7.9" y1="16.1" x2="5.6" y2="18.4"/></svg>
           <span class="fx-btn-label">Bloom</span>
+          <span class="fx-btn-dot" aria-hidden="true"></span>
         </button>
-        <button class="fx-btn" type="button" data-fx="saturation"    data-slider="fx-sm-saturation"                              aria-label="Saturation">
+        <button class="fx-btn on" type="button" data-fx="saturation"    data-slider="fx-sm-saturation" data-toggle="fx-sat"       aria-label="Saturation">
           <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3 Q16.5 7.5 16.5 12 Q16.5 16.5 12 21 Q7.5 16.5 7.5 12 Q7.5 7.5 12 3Z" fill="currentColor" stroke="none" opacity="0.45"/></svg>
           <span class="fx-btn-label">Saturation</span>
+          <span class="fx-btn-dot" aria-hidden="true"></span>
         </button>
         <button class="fx-btn on" type="button" data-fx="cnr"        data-slider="fx-sm-cnr"        data-toggle="fx-cnr"        aria-label="Denoise">
           <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M2 9 Q5 5 8 9 Q11 13 14 9 Q17 5 20 9" opacity="0.4"/><path d="M2 15 Q5 11 8 15 Q11 19 14 15 Q17 11 20 15" opacity="0.7"/></svg>
           <span class="fx-btn-label">Denoise</span>
-        </button>
-        <button class="fx-btn" type="button" data-fx="quality"       data-slider="fx-sm-quality"                                 aria-label="JPEG Quality">
-          <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2.5"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" stroke="none" opacity="0.7"/><path d="M3 15.5 L8 10.5 L13 14 L17 10 L21 14.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <span class="fx-btn-label">Quality</span>
+          <span class="fx-btn-dot" aria-hidden="true"></span>
         </button>
         <button class="fx-btn on" type="button" data-fx="lut"                                       data-toggle="fx-lut"        aria-label="LUT">
           <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
           <span class="fx-btn-label">LUT</span>
-        </button>
-        <button class="fx-btn on" type="button" data-fx="autowb"                                    data-toggle="fx-autowb"     aria-label="Auto WB">
-          <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-          <span class="fx-btn-label">Auto WB</span>
-        </button>
-        <button class="fx-btn" type="button" data-fx="datestamp"                                    data-toggle="fx-datestamp"  aria-label="Date stamp">
-          <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-          <span class="fx-btn-label">Date</span>
-        </button>
-        <button class="fx-btn" type="button" data-fx="framestamp"                                   data-toggle="fx-framestamp" aria-label="Frame no.">
-          <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><rect x="6" y="1" width="2" height="4" rx="0.5" fill="currentColor" stroke="none" opacity="0.7"/><rect x="16" y="1" width="2" height="4" rx="0.5" fill="currentColor" stroke="none" opacity="0.7"/><rect x="6" y="19" width="2" height="4" rx="0.5" fill="currentColor" stroke="none" opacity="0.7"/><rect x="16" y="19" width="2" height="4" rx="0.5" fill="currentColor" stroke="none" opacity="0.7"/></svg>
-          <span class="fx-btn-label">Frame</span>
+          <span class="fx-btn-dot" aria-hidden="true"></span>
         </button>
       </div>
 
       <!-- Hidden state checkboxes (all togglable effects) -->
       <div style="display:none" aria-hidden="true">
         <label class="fx-toggle"><input type="checkbox" id="fx-grain"      checked data-effect="grain"></label>
-        <label class="fx-toggle"><input type="checkbox" id="fx-halation"   checked data-effect="halation"></label>
+        <label class="fx-toggle"><input type="checkbox" id="fx-halation"   data-effect="halation"></label>
         <label class="fx-toggle"><input type="checkbox" id="fx-ca"         checked data-effect="ca"></label>
         <label class="fx-toggle"><input type="checkbox" id="fx-softness"   checked data-effect="softness"></label>
         <label class="fx-toggle"><input type="checkbox" id="fx-sharpen"    checked data-effect="sharpen"></label>
@@ -281,9 +286,8 @@
         <label class="fx-toggle"><input type="checkbox" id="fx-bloom"      checked data-effect="bloom"></label>
         <label class="fx-toggle"><input type="checkbox" id="fx-cnr"        checked data-effect="cnr"></label>
         <label class="fx-toggle"><input type="checkbox" id="fx-lut"        checked data-effect="lut"></label>
-        <label class="fx-toggle"><input type="checkbox" id="fx-autowb"     checked></label>
-        <label class="fx-toggle"><input type="checkbox" id="fx-datestamp"></label>
-        <label class="fx-toggle"><input type="checkbox" id="fx-framestamp"></label>
+        <label class="fx-toggle"><input type="checkbox" id="fx-push"       checked></label>
+        <label class="fx-toggle"><input type="checkbox" id="fx-sat"        checked></label>
       </div>
     </div><!-- /#effects-panel -->
 
@@ -298,6 +302,7 @@
       <button class="vibe-pill"        role="tab" aria-selected="false" data-vibe="monochrome">Monochrome</button>
       <button class="vibe-pill"        role="tab" aria-selected="false" data-vibe="flashback_v1">Flashback V1</button>
       <button class="vibe-pill"        role="tab" aria-selected="false" data-vibe="reddispo">Gold</button>
+      <button class="vibe-pill"        role="tab" aria-selected="false" data-vibe="superia">Expired Superia</button>
       <!-- Custom preset pills are inserted here by main.js -->
       <button id="save-preset-btn" class="vibe-pill vibe-add" type="button"
               aria-label="Save current look as a preset" title="Save preset">＋</button>
@@ -308,7 +313,7 @@
 
       <div class="slider-row"
            data-param="exposure"
-           data-min="-3" data-max="2" data-step="0.05" data-value="0">
+           data-min="-3" data-max="3" data-step="0.05" data-value="0">
         <span class="slider-label">EXP</span>
         <div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div>
         <span class="slider-val">0.0</span>
@@ -316,7 +321,7 @@
 
       <div class="slider-row"
            data-param="wb_temp"
-           data-min="-1500" data-max="1500" data-step="10" data-value="0">
+           data-min="-3000" data-max="3000" data-step="50" data-value="0">
         <span class="slider-label">TEMP</span>
         <div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div>
         <span class="slider-val">0</span>
@@ -324,33 +329,13 @@
 
       <div class="slider-row"
            data-param="tint"
-           data-min="-15" data-max="15" data-step="0.2" data-value="0">
+           data-min="-50" data-max="50" data-step="0.5" data-value="0">
         <span class="slider-label">TINT</span>
         <div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div>
         <span class="slider-val">0.0</span>
       </div>
 
-      <div class="slider-row"
-           data-param="push_pull"
-           data-min="-2" data-max="2" data-step="0.1" data-value="0"
-           title="Push/Pull — contrast & punch">
-        <span class="slider-label">PUSH</span>
-        <div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div>
-        <span class="slider-val">0.0</span>
-      </div>
-
     </div><!-- /#core-sliders -->
-
-    <!-- Batch export settings — always visible in main controls -->
-    <div id="batch-settings-row">
-      <span class="batch-row-label">Batch</span>
-      <div class="seg-toggle" id="batch-format" role="group" aria-label="Batch export format">
-        <button type="button" data-fmt="jpeg" class="active" aria-pressed="true">JPEG</button>
-        <button type="button" data-fmt="tiff" aria-pressed="false">TIFF</button>
-      </div>
-      <button id="apply-all-btn" class="reset-btn batch-apply-btn" type="button" disabled
-              title="Load 2+ photos to copy EXP/WB/tint across the whole roll">Apply all</button>
-    </div>
 
     <!-- Bottom action bar -->
     <div id="action-bar">
@@ -363,9 +348,8 @@
       </button>
 
       <div class="export-group">
-        <button id="batch-btn" class="btn-export hidden" aria-label="Develop all selected files">Batch</button>
-        <button id="export-jpeg-btn" class="btn-export" aria-label="Export as JPEG">JPEG</button>
-        <button id="export-tiff-btn" class="btn-export" aria-label="Export as 16-bit TIFF">TIFF</button>
+        <button id="batch-export-btn" class="btn-export hidden" aria-label="Develop and export all selected files">Batch Export</button>
+        <button id="export-btn" class="btn-export" aria-label="Export current photo">Export</button>
       </div>
     </div><!-- /#action-bar -->
 
@@ -432,8 +416,10 @@
             <li><b>Natural</b> — the developed raw, nothing added: no film look, no
             effects, no exposure lift. Just your exposure, white balance and tint.
             This is the default and the truest starting point.</li>
-            <li><b>Gold</b> — built-in warm, saturated film-style grade. An original
-            interpretation — for an exact look, import a .cube via the ＋ button.</li>
+            <li><b>Gold</b> — warm, saturated Kodak-print style: rich reds, deep blacks,
+            controlled highlights.</li>
+            <li><b>Expired Superia</b> — Fuji Superia Xtra 400 with an expired-film look:
+            teal-green shadows, warm highlights, vivid reds, heavier grain.</li>
             <li><b>Disposable</b> — punchy, contrasty, heavy grain &amp; vignette.</li>
             <li><b>Point &amp; Shoot</b> — balanced consumer-film look, gentle grain.</li>
             <li><b>Rangefinder</b> — clean, fine-grained, restrained.</li>
@@ -452,8 +438,8 @@
         <section>
           <h3>Adjustments</h3>
           <ul>
-            <li><b>EXP</b> — exposure (brightness), in stops.</li>
-            <li><b>TEMP</b> — white balance, cooler ↔ warmer.</li>
+            <li><b>EXP</b> — exposure (brightness), ±3 stops.</li>
+            <li><b>TEMP</b> — white balance, cooler ↔ warmer (±3000K offset).</li>
             <li><b>TINT</b> — green ↔ magenta balance.</li>
           </ul>
         </section>
@@ -461,15 +447,24 @@
         <section>
           <h3>Effects (tap “Effects”)</h3>
           <ul>
-            <li><b>Grain</b> — film grain texture.</li>
-            <li><b>Halation</b> — red/orange glow bleeding from highlights.</li>
-            <li><b>Chrom. Ab.</b> — colour fringing toward the frame edges.</li>
-            <li><b>Softness</b> — gentle overall blur.</li>
-            <li><b>Sharpen</b> — local contrast / edge crispness.</li>
-            <li><b>Vignette</b> — darkening toward the corners.</li>
-            <li><b>Bloom</b> — soft glow spreading from bright areas.</li>
-            <li><b>LUT</b> — the film colour transform itself (off = neutral).</li>
+            <li><b>Push/Pull</b> — film push/pull processing simulation: positive values
+            increase contrast and punch (pushed film), negative values soften and lift
+            shadows (pulled film).</li>
+            <li><b>Grain</b> — film grain texture from a real tile sample.</li>
+            <li><b>Halation</b> — warm red/orange glow bleeding from bright highlights,
+            simulating light scattering in the film base.</li>
+            <li><b>Chrom. Ab.</b> — spectral colour fringing toward the frame edges,
+            simulating lens dispersion.</li>
+            <li><b>Softness</b> — gentle overall blur, like a slight diffusion filter.</li>
+            <li><b>Sharpen</b> — local contrast / edge crispness (unsharp mask).</li>
+            <li><b>Vignette</b> — darkening toward the corners with a cool colour shift.</li>
+            <li><b>Bloom</b> — soft glow spreading from bright areas, like lens flare.</li>
+            <li><b>Saturation</b> — overall colour intensity.</li>
+            <li><b>Denoise</b> — chroma noise reduction (reduces colour speckle in shadows).</li>
+            <li><b>LUT</b> — the film colour transform itself (off = neutral develop).</li>
           </ul>
+          <p>Press and hold any effect button to reveal its strength slider.
+          Double-tap the value to type an exact number.</p>
         </section>
 
         <section>
@@ -504,14 +499,30 @@
         <section>
           <h3>Exporting</h3>
           <ul>
-            <li><b>JPEG</b> — 8-bit, great for sharing. Quality is adjustable under Effects.</li>
-            <li><b>TIFF</b> — 16-bit, best for further editing.</li>
+            <li>Tap <b>Export</b> to develop and save the current photo. The format
+            (JPEG or TIFF) is set in <b>Settings → Export</b>.</li>
+            <li><b>Long-press Export</b> to pick a format on the spot without going into
+            Settings.</li>
+            <li><b>JPEG</b> — 8-bit, great for sharing. Quality is adjustable in Settings.</li>
+            <li><b>TIFF</b> — 16-bit, lossless, best for further editing in Lightroom etc.</li>
             <li>Both export at <b>full resolution</b>. Saving opens the share sheet —
             pick <b>Save Image</b> (Photos) or <b>Save to Files</b>.</li>
-            <li>The <b>Batch</b> button develops every <i>included</i> photo (see Photo
-            strip above) — each with its own profile and adjustments — then saves them
-            together in <b>one</b> share sheet. The button label shows how many are
-            included, e.g. <b>Batch 4/6</b>.</li>
+            <li>With 2+ photos loaded, a <b>Batch Export</b> button appears. It develops
+            every <i>included</i> photo — each with its own profile and adjustments —
+            and saves them together in one share sheet. Long-press it to pick the batch
+            format separately from the single-export format.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h3>Settings (gear icon)</h3>
+          <ul>
+            <li><b>Default Profile</b> — which vibe loads automatically when you open a new photo.</li>
+            <li><b>Profile Order</b> — drag to reorder the vibe strip.</li>
+            <li><b>Export</b> — format (JPEG / TIFF) and quality for single and batch export separately.</li>
+            <li><b>Stamp Color</b> — colour of the date/frame number stamp.</li>
+            <li><b>Reduce motion</b> — disables animations. Also respects the system accessibility setting.</li>
+            <li><b>Full-res export on iOS</b> — render at the sensor's full native resolution. Off by default to avoid out-of-memory crashes on large RAW files.</li>
           </ul>
         </section>
 
@@ -579,6 +590,160 @@
     </div>
   </div>
 
+  <!-- ══════════════════════════════════════════════════════════
+       SETTINGS OVERLAY
+  ══════════════════════════════════════════════════════════ -->
+  <div id="settings-overlay" role="dialog" aria-modal="true" aria-label="Settings">
+    <div id="settings-sheet">
+      <div class="settings-head">
+        <span class="settings-title">Settings</span>
+        <button id="settings-close" class="icon-btn" aria-label="Close settings">✕</button>
+      </div>
+      <div class="settings-body">
+
+        <section class="settings-section">
+          <h3 class="settings-section-title">Default Profile</h3>
+          <div class="settings-row">
+            <span class="settings-label">Opens with</span>
+            <select id="settings-default-vibe" class="settings-select"></select>
+          </div>
+        </section>
+
+        <section class="settings-section settings-section-collapse">
+          <button class="settings-section-toggle" id="settings-vibe-order-toggle" type="button" aria-expanded="false">
+            <h3 class="settings-section-title">Profile Order</h3>
+            <svg class="settings-toggle-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div id="settings-vibe-order-body" hidden>
+            <p class="settings-note" style="margin:4px 0 10px">Drag to reorder the profile strip.</p>
+            <div id="settings-vibe-order" class="settings-vibe-list"></div>
+            <div class="settings-row" style="margin-top:10px">
+              <button type="button" id="settings-reset-vibe-order" class="settings-text-btn">Reset order to default</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3 class="settings-section-title">Export</h3>
+          <div class="settings-row">
+            <span class="settings-label">Single export format</span>
+            <div class="seg-toggle" id="settings-export-format" role="group" aria-label="Export format">
+              <button type="button" data-fmt="jpeg" class="active" aria-pressed="true">JPEG</button>
+              <button type="button" data-fmt="tiff" aria-pressed="false">TIFF</button>
+            </div>
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">Batch export format</span>
+            <div class="seg-toggle" id="settings-batch-export-format" role="group" aria-label="Batch export format">
+              <button type="button" data-fmt="jpeg" class="active" aria-pressed="true">JPEG</button>
+              <button type="button" data-fmt="tiff" aria-pressed="false">TIFF</button>
+            </div>
+          </div>
+          <div class="settings-row settings-row-slider">
+            <span class="settings-label">JPEG Quality</span>
+            <div class="settings-quality-wrap">
+              <input type="range" id="settings-jpeg-quality" min="50" max="100" step="1" value="95" aria-label="JPEG quality">
+              <span id="settings-jpeg-quality-val" class="settings-quality-val">95</span>
+            </div>
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">Confirm before removing photo</span>
+            <label class="settings-switch">
+              <input type="checkbox" id="settings-confirm-remove" checked>
+              <span class="settings-switch-track"></span>
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3 class="settings-section-title">Stamp</h3>
+          <div class="settings-row">
+            <span class="settings-label">Date stamp</span>
+            <label class="settings-switch">
+              <input type="checkbox" id="settings-date-stamp">
+              <span class="settings-switch-track"></span>
+            </label>
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">Frame number</span>
+            <label class="settings-switch">
+              <input type="checkbox" id="settings-frame-stamp">
+              <span class="settings-switch-track"></span>
+            </label>
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">Date</span>
+            <input type="date" id="settings-date-input" class="settings-date-chip" aria-label="Stamp date">
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">Format</span>
+            <div class="seg-toggle" id="settings-date-format" role="group" aria-label="Date format">
+              <button type="button" data-datefmt="YYMMDD" class="active">'YY MM DD</button>
+              <button type="button" data-datefmt="YYMM">'YY MM</button>
+            </div>
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">Color</span>
+            <div class="seg-toggle" id="settings-stamp-color" role="group" aria-label="Stamp color">
+              <button type="button" data-color="amber" class="active" aria-pressed="true">Amber</button>
+              <button type="button" data-color="white" aria-pressed="false">White</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3 class="settings-section-title">Default Crop</h3>
+          <div class="seg-toggle settings-seg-full" id="settings-default-crop" role="group" aria-label="Default crop aspect">
+            <button type="button" data-crop="free"  class="active" aria-pressed="true">Free</button>
+            <button type="button" data-crop="3:2"   aria-pressed="false">3:2</button>
+            <button type="button" data-crop="4:3"   aria-pressed="false">4:3</button>
+            <button type="button" data-crop="1:1"   aria-pressed="false">1:1</button>
+            <button type="button" data-crop="16:9"  aria-pressed="false">16:9</button>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3 class="settings-section-title">Appearance</h3>
+          <div class="settings-row">
+            <span class="settings-label">Theme</span>
+            <div class="seg-toggle" id="settings-theme" role="group" aria-label="Theme">
+              <button type="button" data-theme="dark" class="active" aria-pressed="true">Dark</button>
+              <button type="button" data-theme="light" aria-pressed="false">Light</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3 class="settings-section-title">Advanced</h3>
+          <div class="settings-row">
+            <div class="settings-label-group">
+              <span class="settings-label">Reduce motion</span>
+              <span class="settings-desc">Disables slide and fade animations throughout the app.</span>
+            </div>
+            <label class="settings-switch">
+              <input type="checkbox" id="settings-reduce-motion">
+              <span class="settings-switch-track"></span>
+            </label>
+          </div>
+          <div class="settings-row">
+            <div class="settings-label-group">
+              <span class="settings-label">Full-res export on iOS</span>
+              <span class="settings-desc">Renders at the sensor's native resolution instead of a safe downscaled size. May crash on large RAW files.</span>
+            </div>
+            <label class="settings-switch">
+              <input type="checkbox" id="settings-full-res-ios">
+              <span class="settings-switch-track"></span>
+            </label>
+          </div>
+          <div class="settings-row" style="margin-top:4px">
+            <button type="button" id="settings-reset-all" class="settings-text-btn settings-text-btn-danger">Reset all settings to defaults</button>
+          </div>
+        </section>
+
+      </div>
+    </div>
+  </div>
+
 </div><!-- /#app -->
 
 <!-- Hidden file inputs — triggered programmatically -->
@@ -597,6 +762,7 @@
   hidden
   aria-hidden="true"
 >
+
 
 <script type="module" src="/src/main.js"></script>
 </body>

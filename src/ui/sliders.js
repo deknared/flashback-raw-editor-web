@@ -53,7 +53,7 @@ function attachScrub(el, onChange) {
     resetBtn = document.createElement('button');
     resetBtn.type = 'button';
     resetBtn.className = 'slider-reset';
-    resetBtn.textContent = '⟲';
+    resetBtn.textContent = '↺';
     resetBtn.setAttribute('aria-label', 'Reset to default');
     resetBtn.title = 'Reset to default';
     resetBtn.addEventListener('pointerdown', (e) => e.stopPropagation());  // don't start a drag
@@ -117,7 +117,7 @@ function attachScrub(el, onChange) {
   el.addEventListener('pointerup',     stopDrag);
   el.addEventListener('pointercancel', stopDrag);
 
-  // ── Double-tap / double-click to reset to default ─────────────────────────
+  // ── Double-tap track/thumb to reset to default ─────────────────────────────
   let lastTap = 0;
   el.addEventListener('pointerup', (e) => {
     const now = Date.now();
