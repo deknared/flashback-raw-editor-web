@@ -1,16 +1,15 @@
-// Chromatic aberration — radial channel separation.
+// Spectral chromatic aberration — 8-sample integration across the visible spectrum.
 //
-// Scales the R channel sample slightly outward from the image centre and the
-// B channel slightly inward, leaving G in place. This reproduces the radial
-// colour fringing of cheap lenses (the original did this with a warpAffine
-// radial zoom; here it's a per-pixel bilinear resample offset).
-//
-// Operates on interleaved RGB float data, stride 3, in [0,1]. Per-pixel.
+// Port of OP's ca_tex.wgsl, adapted for storage-buffer format. Models lens
+// dispersion: red is anchored, blue is displaced outward from centre. Each
+// spectral sample uses sc = 1/(1+strength*t), t in [0,1] (0=red, 1=blue).
+// RGB band weights are Gaussians with σ=0.25. Result: smooth purple→cyan fringe
+// at light/dark edges, matching real lens CA — vs the old hard 3-channel split.
 
 struct U {
     width:    f32,
     height:   f32,
-    strength: f32,   // fractional radial scale (e.g. 0.01 = 1%)
+    strength: f32,   // = ca_pixels / (long_edge/2), e.g. 0.0077 for Disposable
     _pad:     f32,
 }
 
@@ -18,8 +17,7 @@ struct U {
 @group(0) @binding(1) var<storage, read_write> dst: array<f32>;
 @group(0) @binding(2) var<uniform>             u:   U;
 
-// Bilinear sample of channel `c` at floating (x,y) with edge clamp.
-fn sample_ch(x: f32, y: f32, c: u32, W: u32, H: u32) -> f32 {
+fn sample_rgb(x: f32, y: f32, W: u32, H: u32) -> vec3f {
     let wi = i32(W);
     let hi = i32(H);
     let x0 = clamp(i32(floor(x)), 0, wi - 1);
@@ -28,12 +26,14 @@ fn sample_ch(x: f32, y: f32, c: u32, W: u32, H: u32) -> f32 {
     let y1 = clamp(y0 + 1, 0, hi - 1);
     let fx = x - floor(x);
     let fy = y - floor(y);
-    let i00 = (u32(y0) * W + u32(x0)) * 3u + c;
-    let i10 = (u32(y0) * W + u32(x1)) * 3u + c;
-    let i01 = (u32(y1) * W + u32(x0)) * 3u + c;
-    let i11 = (u32(y1) * W + u32(x1)) * 3u + c;
-    let top = mix(src[i00], src[i10], fx);
-    let bot = mix(src[i01], src[i11], fx);
+    let i00 = (u32(y0) * W + u32(x0)) * 3u;
+    let i10 = (u32(y0) * W + u32(x1)) * 3u;
+    let i01 = (u32(y1) * W + u32(x0)) * 3u;
+    let i11 = (u32(y1) * W + u32(x1)) * 3u;
+    let top = mix(vec3f(src[i00], src[i00+1u], src[i00+2u]),
+                  vec3f(src[i10], src[i10+1u], src[i10+2u]), fx);
+    let bot = mix(vec3f(src[i01], src[i01+1u], src[i01+2u]),
+                  vec3f(src[i11], src[i11+1u], src[i11+2u]), fx);
     return mix(top, bot, fy);
 }
 
@@ -51,11 +51,26 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     let dx = x - cx;
     let dy = y - cy;
 
-    let sR = 1.0 + u.strength;   // R sampled from further out
-    let sB = 1.0 - u.strength;   // B sampled from closer in
+    // 8 spectral samples across t ∈ [0,1]. Band weight σ=0.25 → 1/(2σ²)=8.
+    var acc  = vec3f(0.0);
+    var wsum = vec3f(0.0);
+    for (var i: u32 = 0u; i < 8u; i++) {
+        let t  = f32(i) / 7.0;
+        let wR = exp(-t * t * 8.0);
+        let wG = exp(-(t - 0.5) * (t - 0.5) * 8.0);
+        let wB = exp(-(t - 1.0) * (t - 1.0) * 8.0);
+        let w  = vec3f(wR, wG, wB);
+        // Reciprocal magnification: t=0 red stays fixed, t=1 blue shrinks
+        // inward at source → content displaced outward (blue fringe on periphery).
+        let sc = 1.0 / (1.0 + u.strength * t);
+        let s  = sample_rgb(cx + dx * sc, cy + dy * sc, W, H);
+        acc  += s * w;
+        wsum += w;
+    }
 
-    let base = pixel * 3u;
-    dst[base]      = sample_ch(cx + dx * sR, cy + dy * sR, 0u, W, H);
-    dst[base + 1u] = src[base + 1u];
-    dst[base + 2u] = sample_ch(cx + dx * sB, cy + dy * sB, 2u, W, H);
+    let base   = pixel * 3u;
+    let result = acc / wsum;
+    dst[base]      = result.r;
+    dst[base + 1u] = result.g;
+    dst[base + 2u] = result.b;
 }

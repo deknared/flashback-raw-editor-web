@@ -19,14 +19,15 @@ and installs to the iPhone Home Screen.
 
 ## Screenshots
 
-| Natural | Disposable | Point & Shoot |
-|:---:|:---:|:---:|
-| ![Natural look](docs/screenshots/natural.png) | ![Disposable look](docs/screenshots/disposable.png) | ![Point & Shoot look](docs/screenshots/pointshoot.png) |
-| Rangefinder | Monochrome | Flashback V1 |
-| ![Rangefinder look](docs/screenshots/rangefinder.png) | ![Monochrome look](docs/screenshots/monochrome.png) | ![Flashback V1 look](docs/screenshots/flashbackv1.png) |
+| Natural | Disposable | Point & Shoot | Rangefinder |
+|:---:|:---:|:---:|:---:|
+| ![Natural](docs/screenshots/natural.jpg) | ![Disposable](docs/screenshots/disposable.jpg) | ![Point & Shoot](docs/screenshots/pointandshoot.jpg) | ![Rangefinder](docs/screenshots/rangefinder.jpg) |
+| **Monochrome** | **Flashback V1** | **Gold** | **Expired Superia** |
+| ![Monochrome](docs/screenshots/monochrome.jpg) | ![Flashback V1](docs/screenshots/flashbackv1.jpg) | ![Gold](docs/screenshots/gold.jpg) | ![Expired Superia](docs/screenshots/superia.jpg) |
 
-Same RAW file, all six film vibes — each a 3D LUT plus tuned grain, halation,
-vignette, and chromatic aberration, rendered live on the GPU.
+Eight film looks — colour-calibrated 3D LUTs (or procedural grades for Gold and
+Expired Superia) with per-look grain, halation, vignette, and chromatic aberration
+character, all rendered live on the GPU from the same RAW file.
 
 ## Why a web app
 
@@ -192,7 +193,7 @@ src/
   ui/
     sliders.js          Touch scrub sliders
     export.js           JPEG (sRGB Exif) + 16-bit TIFF encoders
-    style.css            Dark, mobile-first theme
+    style.css            Mobile-first theme (dark + light mode)
   shaders/*.wgsl        Compute shaders (colour pipeline + effects)
 ```
 
@@ -238,6 +239,32 @@ FOR A PARTICULAR PURPOSE. See the GNU General Public License for details.
 Contributions, issues, and forks are welcome under the terms of the GPL-3.0 license above.
 
 ## Changelog
+
+### 1.1.0
+
+**New film look: Expired Superia** — procedural grade with a strong teal/cyan cast,
+warm-highlight/cool-shadow split, vivid reds. Factory defaults: grain 1.5, sharpen 1.45,
+vignette 0.45, push −1.
+
+**Optical effects rewrite**
+- Bloom: 4× pyramid downsample/upsample
+- Halation: two-pass screen blend, sigmoid gate in ACEScct space
+- Chromatic aberration: spectral 8-sample reciprocal-magnification shader
+- Highlight recovery in raw WB space (pre-matrix)
+
+**Settings page** — export format (JPEG / TIFF 16-bit), JPEG quality, batch format, date
+and frame stamps with colour options, profile order (drag to reorder), light/dark theme,
+reduce motion, full-res iOS export, and reset buttons.
+
+**UX polish**
+- Long-press Export or Batch Export to pick a format for that one export without changing settings
+- Push and Saturation bypass toggles in the Effects strip (dot indicator)
+- Tapping an effect button opens its slider; long-press toggles the effect on/off
+- Sharpen ↺ reset now correctly targets the loaded preset's default value
+- Effects panel redesigned: above action bar, all-corner radius, proper padding
+- Gold highlight blowout fixed (highlight desaturation curve)
+- Finer grain tile scale across all looks
+- Auto-WB removed from UI
 
 ### 1.0.0 — Initial release
 

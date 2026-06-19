@@ -38,6 +38,22 @@
   --font-mono: 'SF Mono', 'Fira Code', 'Consolas', monospace;
 }
 
+html.light {
+  --bg:           #f2f2f2;
+  --surface:      #e4e4e4;
+  --surface-hi:   #d8d8d8;
+  --border:       #c8c8c8;
+  --accent:       #d96b28;
+  --accent-dim:   rgba(217, 107, 40, 0.15);
+  --accent-glow:  rgba(217, 107, 40, 0.07);
+  --text:         #1a1a1a;
+  --text-dim:     #555;
+  --text-faint:   #aaa;
+  --slider-track: #d0d0d0;
+  --slider-fill:  #d96b28;
+  --danger:       #c0392b;
+}
+
 /* ── Reset ────────────────────────────────────────────────── */
 *, *::before, *::after {
   box-sizing: border-box;
@@ -256,7 +272,7 @@ button { touch-action: manipulation; }
 .bar-left, .bar-right {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
 }
 /* The filename yields space to the (fixed-size) icon buttons — on a 390px
    iPhone the old fixed max-width pushed the right-side buttons off-screen. */
@@ -409,24 +425,32 @@ button { touch-action: manipulation; }
    ╚══════════════════════════════════════════════════════════╝ */
 #effects-panel {
   position: absolute;
-  bottom: 0;
+  bottom: 48px;
   left: 0;
   right: 0;
   z-index: 5;
   display: none;
   flex-direction: column;
   background: var(--bg);
-  border-top: 1px solid var(--border);
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
 }
-#effects-panel.open { display: flex; }
+#effects-panel.open {
+  display: flex;
+  animation: slideUpPanel 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.reduce-motion #effects-panel.open { animation: none; }
+@keyframes slideUpPanel {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
 
 .fx-head {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 2px 0;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
 }
 .fx-head-title {
@@ -439,7 +463,8 @@ button { touch-action: manipulation; }
 .fx-head-actions {
   display: flex;
   align-items: center;
-  gap: 0;
+  gap: 4px;
+  margin-left: auto;
 }
 .fx-icon-btn {
   display: flex;
@@ -458,29 +483,6 @@ button { touch-action: manipulation; }
 .fx-icon-btn svg { width: 17px; height: 17px; }
 .fx-icon-btn.active { color: var(--accent); }
 
-/* Batch settings row — always visible in main controls */
-#batch-settings-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 4px 0 2px;
-  border-top: 1px solid var(--border);
-}
-.batch-row-label {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-  flex-shrink: 0;
-}
-.batch-apply-btn {
-  width: auto;
-  flex: 1;
-  padding: 6px 10px;
-  font-size: 11px;
-}
-
 .fx-row {
   display: flex;
   align-items: center;
@@ -493,10 +495,29 @@ button { touch-action: manipulation; }
   display: none;
   flex-direction: column;
   gap: 8px;
-  padding: 8px 0 6px;
+  padding: 10px 12px 14px;
   border-bottom: 1px solid var(--border);
 }
 #fx-slider-area.open { display: flex; }
+
+/* Small toggle switch used in the fx-sa-head beside the effect name */
+.fx-sa-toggle {
+  margin-left: auto;
+  margin-right: 4px;
+}
+.fx-sa-toggle .settings-switch-track {
+  width: 34px;
+  height: 20px;
+}
+.fx-sa-toggle .settings-switch-track::after {
+  width: 14px;
+  height: 14px;
+  top: 3px;
+  left: 3px;
+}
+.fx-sa-toggle input:checked + .settings-switch-track::after {
+  transform: translateX(14px);
+}
 
 .fx-sa-head {
   display: flex;
@@ -539,11 +560,10 @@ button { touch-action: manipulation; }
   display: flex;
   gap: 6px;
   overflow-x: auto;
-  padding: 8px 0 6px;
+  padding: 12px 12px 10px;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
   -ms-overflow-style: none;
-  border-bottom: 1px solid var(--border);
 }
 #fx-strip::-webkit-scrollbar { display: none; }
 
@@ -553,26 +573,21 @@ button { touch-action: manipulation; }
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: 4px;
   width: 62px;
-  height: 70px;
-  padding: 8px 4px 6px;
+  height: 72px;
+  padding: 8px 4px 5px;
   background: var(--surface);
   border: 1.5px solid var(--border);
   border-radius: var(--radius);
-  color: var(--text-faint);
+  color: var(--accent);
   cursor: pointer;
   position: relative;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  transition: background 0.15s, border-color 0.15s;
 }
 .fx-btn:active { background: var(--surface-hi); }
-.fx-btn.on {
-  background: var(--accent-dim);
-  border-color: var(--accent);
-  color: var(--accent);
-}
 .fx-btn.editing {
-  box-shadow: 0 0 0 2px var(--accent);
+  border-color: var(--accent);
 }
 .fx-btn-icon {
   width: 26px;
@@ -582,13 +597,23 @@ button { touch-action: manipulation; }
 .fx-btn-label {
   font-size: 9px;
   letter-spacing: 0.02em;
-  color: inherit;
+  color: var(--accent);
   white-space: nowrap;
   line-height: 1;
   max-width: 58px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.fx-btn-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0;
+  flex-shrink: 0;
+  transition: opacity 0.15s;
+}
+.fx-btn.on .fx-btn-dot { opacity: 1; }
 
 .fx-toggle {
   display: flex;
@@ -1265,7 +1290,7 @@ body.zen #controls  { display: none; }
   justify-content: center;
   font-size: 20px;
   font-weight: 700;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--accent);
   pointer-events: none;
 }
 
@@ -1458,4 +1483,319 @@ body.zen #controls  { display: none; }
    ╚══════════════════════════════════════════════════════════╝ */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}
+.reduce-motion *, .reduce-motion *::before, .reduce-motion *::after {
+  transition-duration: 0.01ms !important;
+  animation-duration: 0.01ms !important;
+}
+
+/* ── Effects panel action buttons (Reset All / Apply All) ─── */
+.fx-action-btn {
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+  background: transparent;
+  border: 1.5px solid var(--accent);
+  border-radius: 20px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s;
+}
+.fx-action-btn:active { opacity: 0.65; }
+.fx-action-btn:disabled { opacity: 0.3; pointer-events: none; }
+
+/* Format picker sheet (long-press export — slides up near export button) */
+.format-picker {
+  display: none;
+  position: absolute;
+  bottom: 56px;
+  right: 12px;
+  z-index: 7;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  min-width: 150px;
+}
+.format-picker.open {
+  display: flex;
+  animation: slideUpPanel 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.reduce-motion .format-picker.open { animation: none; }
+.format-picker button {
+  -webkit-appearance: none;
+  appearance: none;
+  padding: 5px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+  background: transparent;
+  border: 1.5px solid var(--accent);
+  border-radius: 20px;
+  text-align: center;
+  white-space: nowrap;
+}
+.format-picker button:active { opacity: 0.65; }
+
+
+/* ── Settings overlay ───────────────────────────────────────── */
+#settings-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+#settings-overlay.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+#settings-sheet {
+  width: 100%;
+  max-width: 480px;
+  max-height: 85dvh;
+  background: var(--bg);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  transform: translateY(100%);
+  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+#settings-overlay.open #settings-sheet {
+  transform: translateY(0);
+}
+
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.settings-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.settings-body {
+  overflow-y: auto;
+  flex: 1;
+  -webkit-overflow-scrolling: touch;
+}
+
+.settings-section {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-section-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin: 0 0 10px;
+}
+
+/* Collapsible section toggle (Profile Order) */
+.settings-section-collapse .settings-section-title { margin: 0; }
+.settings-section-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0 0 0;
+  cursor: pointer;
+  color: inherit;
+  text-align: left;
+}
+.settings-toggle-chevron {
+  width: 16px;
+  height: 16px;
+  color: var(--text-faint);
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+.settings-section-toggle[aria-expanded="true"] .settings-toggle-chevron {
+  transform: rotate(180deg);
+}
+
+/* Date chip in settings panel */
+.settings-date-chip {
+  background: var(--surface);
+  color: var(--accent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  padding: 4px 8px;
+  outline: none;
+  cursor: pointer;
+  color-scheme: dark;
+}
+.settings-date-chip::-webkit-date-and-time-value { text-align: right; }
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 36px;
+}
+.settings-row + .settings-row { margin-top: 6px; }
+
+.settings-label {
+  font-size: 13px;
+  color: var(--text);
+  flex: 1;
+}
+
+.settings-select {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: 13px;
+  outline: none;
+  cursor: pointer;
+}
+
+.settings-note {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin: 6px 0 0;
+}
+
+/* Label with description below it */
+.settings-label-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+.settings-desc {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+/* JPEG quality slider row */
+.settings-row-slider { align-items: center; }
+.settings-quality-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-quality-wrap input[type="range"] {
+  width: 110px;
+  accent-color: var(--accent);
+}
+.settings-quality-val {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--accent);
+  min-width: 2.2em;
+  text-align: right;
+}
+
+.settings-seg-full { width: 100%; margin-top: 4px; }
+.settings-seg-full button { flex: 1; }
+
+/* iOS-style toggle switch */
+.settings-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.settings-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+.settings-switch-track {
+  width: 40px;
+  height: 24px;
+  background: var(--border);
+  border-radius: 999px;
+  transition: background 0.2s;
+  position: relative;
+  flex-shrink: 0;
+}
+.settings-switch-track::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  transition: transform 0.2s, background 0.2s;
+}
+.settings-switch input:checked + .settings-switch-track { background: var(--accent); }
+.settings-switch input:checked + .settings-switch-track::after {
+  transform: translateX(16px);
+  background: #fff;
+}
+
+/* Vibe drag-reorder list */
+.settings-vibe-list { display: flex; flex-direction: column; gap: 4px; }
+.settings-vibe-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  transition: opacity 0.15s;
+}
+.settings-vibe-item.dragging { opacity: 0.35; cursor: grabbing; }
+.settings-vibe-handle { color: var(--text-faint); font-size: 13px; line-height: 1; }
+.settings-vibe-label { font-size: 13px; color: var(--text); }
+
+.settings-text-btn {
+  font-size: 13px;
+  color: var(--accent);
+  padding: 8px 14px;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  text-align: center;
+  width: 100%;
+}
+.settings-text-btn:active { opacity: 0.6; }
+.settings-text-btn-danger {
+  color: #e05252;
+  border-color: #e05252;
 }

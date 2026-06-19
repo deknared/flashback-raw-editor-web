@@ -66,11 +66,6 @@ export class FlashbackProcessor {
     this._revGain = 1;
     /** EXIF capture date string of the loaded photo (for the date stamp). */
     this._dateTaken = null;
-    /** Auto WB state + the data needed to re-balance without re-decoding. */
-    this.autoWbEnabled = true;
-    this._asn = null;          // this file's AsShotNeutral
-    this._rawPixels = null;    // kept so toggling Auto WB can re-preprocess
-    this._rawW = 0; this._rawH = 0;
     /** Saturation (1 = none). */
     this.saturation = 1;
     /** Net 90° clockwise rotations the user applied (mod 4); replayed at export. */
@@ -278,7 +273,6 @@ export class FlashbackProcessor {
       ? REVERSE_AE_T_REF / decoded.exposureS
       : 1;
     this._dateTaken = decoded.dateTaken ?? null;
-    this._asn = decoded.asn ?? null;
 
     const { pixels, width, height, ccm, isFlashback, metadata } = decoded;
     console.log(
@@ -286,10 +280,6 @@ export class FlashbackProcessor {
       `${isFlashback ? 'Flashback' : (metadata?.camera_make ?? 'generic')} profile`
     );
 
-    // Keep the raw pixels so the Auto WB toggle can re-balance without a
-    // re-decode. The matrix carries the white balance (per-file ASN, or the
-    // fixed reference when Auto WB is off).
-    this._rawPixels = pixels; this._rawW = width; this._rawH = height;
     // One locked unit: preprocess (which frees + rebuilds buffers) then render,
     // so a render from the previous photo can't be reading buffers as we free them.
     return this._locked(async () => {
@@ -305,16 +295,6 @@ export class FlashbackProcessor {
    * generic. The Auto WB toggle no longer alters colour.
    */
   _ccmFor(perFileCcm) { return perFileCcm; }
-
-  /**
-   * Kept for the (now redundant) Auto WB toggle — colour is fixed/calibrated, so
-   * toggling just re-renders without re-balancing. Use the TEMP/TINT sliders for
-   * per-shot white-balance changes.
-   * @returns {Promise<ImageData|null>}
-   */
-  async applyAutoWb() {
-    return this._locked(() => this._render(this._full, {}));
-  }
 
   // ── Preprocess: linear sensor RGB → ACEScct intermediate ──────────────────
 

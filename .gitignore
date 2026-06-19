@@ -13,6 +13,10 @@ test-assets/
 # Local agent / editor tooling
 .claude/
 
+# Local planning docs (never published)
+PLAN*.md
+PHASE1_FINDINGS.md
+
 # Vite cache
 .vite/
 

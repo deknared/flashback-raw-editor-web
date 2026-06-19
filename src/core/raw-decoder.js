@@ -20,7 +20,7 @@
 import {
   LINSRGB_TO_ACESCG, SENSOR_BLACK,
   FLASHBACK_EXPOSURE_COMP_EV, LIBRAW_PREMUL,
-  ASN_LIBRAW_CAL, FM1, computeFlashbackCCM,
+  ASN_D50, ASN_LIBRAW_CAL, FM1, FM1_WB_TO_ACESCG, computeFlashbackCCM,
 } from './config.js';
 import { decodeOne35HalfSize } from './one35-dng.js';
 
@@ -28,12 +28,85 @@ import { decodeOne35HalfSize } from './one35-dng.js';
 // Set to false to fall back to libraw-wasm for comparison/debugging.
 const USE_JS_DECODER = true;
 
-// Highlight recovery is intentionally absent: it only ever touches CLIPPED
-// pixels, blows out high-white shots (the v1.17/v1.18 regression), and does
-// nothing for the magenta cast — which is NOT a clipping artefact. The raw sky
-// decodes correctly (green > red); the cast is introduced downstream by the
-// colour matrix acting on libraw-wasm's green tone response. So leave the raw
-// untouched here and address colour in the pipeline, not by reconstruction.
+/**
+ * Highlight recovery (inpaint-opposed), port of processor.py _recover_highlights().
+ * Runs on true raw sensor values (not WB'd) in [0,1]. Replaces clipped pixels with
+ * a cube-root pair-average reconstruction in WB space, then returns WB-normalized
+ * values (raw / asn) for every pixel. After calling this, the CCM must be
+ * FM1_WB_TO_ACESCG (expects WB'd input) rather than RAW_TO_ACESCG.
+ *
+ * The near-clip scan (raw max ∈ [0.85, 0.93]) approximates cv2.dilate(mask, 15×15),
+ * capturing bordering non-clipped pixels to compute a per-channel chrominance offset.
+ *
+ * @param {Float32Array} pixels  interleaved RGB raw values in [0,1], mutated in place
+ * @param {number[]} asn  AsShotNeutral [R,1,B] e.g. [0.541, 1.0, 0.597]
+ * @param {number} [threshold=0.95]  raw value at which a channel is considered clipped
+ */
+function recoverHighlights(pixels, asn, threshold = 0.95) {
+  const n = pixels.length / 3;
+  const aInv = [1 / asn[0], 1 / asn[1], 1 / asn[2]];
+
+  // First pass: detect clipped pixels and accumulate chrominance from near-clip region.
+  const clipped = new Uint8Array(pixels.length);
+  let anyClipped = false;
+  const sums   = [0, 0, 0];
+  const counts = [0, 0, 0];
+
+  for (let i = 0; i < n; i++) {
+    const b = i * 3;
+    const r = pixels[b], g = pixels[b + 1], bv = pixels[b + 2];
+    const cR = r  >= threshold ? 1 : 0;
+    const cG = g  >= threshold ? 1 : 0;
+    const cB = bv >= threshold ? 1 : 0;
+    clipped[b] = cR; clipped[b + 1] = cG; clipped[b + 2] = cB;
+    if (cR || cG || cB) anyClipped = true;
+
+    // Near-clip (but not clipped) pixels → chrominance reference sample.
+    const maxRaw = Math.max(r, g, bv);
+    if (maxRaw >= 0.85 && maxRaw < threshold) {
+      const rw = r * aInv[0], gw = g * aInv[1], bw = bv * aInv[2];
+      const Rc = Math.cbrt(rw < 0 ? 0 : rw);
+      const Gc = Math.cbrt(gw < 0 ? 0 : gw);
+      const Bc = Math.cbrt(bw < 0 ? 0 : bw);
+      const refR = Math.pow((Gc + Bc) * 0.5, 3);
+      const refG = Math.pow((Rc + Bc) * 0.5, 3);
+      const refB = Math.pow((Rc + Gc) * 0.5, 3);
+      if (!cR) { sums[0] += rw - refR; counts[0]++; }
+      if (!cG) { sums[1] += gw - refG; counts[1]++; }
+      if (!cB) { sums[2] += bw - refB; counts[2]++; }
+    }
+  }
+
+  // Per-channel chrominance offset (scalar — same as OP's global mean).
+  const chroma = [
+    counts[0] >= 30 ? sums[0] / counts[0] : 0,
+    counts[1] >= 30 ? sums[1] / counts[1] : 0,
+    counts[2] >= 30 ? sums[2] / counts[2] : 0,
+  ];
+
+  // Second pass: WB-normalise every pixel; reconstruct where clipped.
+  if (!anyClipped) {
+    for (let i = 0; i < pixels.length; i++) pixels[i] *= aInv[i % 3];
+    return;
+  }
+  for (let i = 0; i < n; i++) {
+    const b  = i * 3;
+    const r  = pixels[b], g = pixels[b + 1], bv = pixels[b + 2];
+    const rw = r  * aInv[0];
+    const gw = g  * aInv[1];
+    const bw = bv * aInv[2];
+    const Rc = Math.cbrt(rw < 0 ? 0 : rw);
+    const Gc = Math.cbrt(gw < 0 ? 0 : gw);
+    const Bc = Math.cbrt(bw < 0 ? 0 : bw);
+    const refR = Math.pow((Gc + Bc) * 0.5, 3) + chroma[0];
+    const refG = Math.pow((Rc + Bc) * 0.5, 3) + chroma[1];
+    const refB = Math.pow((Rc + Gc) * 0.5, 3) + chroma[2];
+    // max() prevents reconstruction from darkening non-clipped bright areas.
+    pixels[b]     = clipped[b]     ? Math.max(rw, refR) : rw;
+    pixels[b + 1] = clipped[b + 1] ? Math.max(gw, refG) : gw;
+    pixels[b + 2] = clipped[b + 2] ? Math.max(bw, refB) : bw;
+  }
+}
 
 // The Flashback CCM (raw → ACEScg) is now computed per-shot via
 // computeFlashbackCCM() in _decodeBody, using whichever FM1 is available:
@@ -364,10 +437,12 @@ export class RawDecoder {
         if (width > margin * 4 && height > margin * 4)
           ({ pixels, width, height } = cropBorder(pixels, width, height, margin));
 
-        // premul=[1,1,1]: no libraw-wasm scaling to compensate — the custom
-        // decoder reads true raw values identical to rawpy (user_wb=[1,1,1,1]),
-        // so the same FM1/ASN_D50 CCM applies without any channel scaling.
-        const ccm = computeFlashbackCCM(FM1, FLASHBACK_EXPOSURE_COMP_EV, [1.0, 1.0, 1.0]);
+        // Highlight recovery: run on true raw values, returns WB-normalized pixels
+        // (raw / ASN_D50). Use the fixed ASN_D50 so FM1_WB_TO_ACESCG (which expects
+        // ASN_D50-normalised input) stays correct. evComp=0 so no extra CCM scaling.
+        recoverHighlights(pixels, ASN_D50);
+        const k = Math.pow(2, FLASHBACK_EXPOSURE_COMP_EV);
+        const ccm = k === 1 ? FM1_WB_TO_ACESCG : FM1_WB_TO_ACESCG.map(v => v * k);
 
         return {
           pixels, width, height, ccm, isFlashback: true,
