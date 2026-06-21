@@ -27,10 +27,11 @@ const DEFAULTS = {
   dateStamp:         false,
   frameStamp:        false,
   dateFormat:        'YYMMDD',
+  autoDateFromFile:  true,
   customDate:        null,
   stampColor:        'amber',
   defaultCrop:       'free',
-  fullResIOS:        false,
+  fullResExport:     false,
   reduceMotion:      false,
   theme:             'dark',
 };
@@ -144,7 +145,8 @@ export function initSettings(state, { onSettingsChange, onVibeOrderChange }) {
   }
 
   wireCheck('settings-confirm-remove', 'confirmRemove');
-  wireCheck('settings-full-res-ios',   'fullResIOS');
+  wireCheck('settings-auto-date',      'autoDateFromFile');
+  wireCheck('settings-full-res-export', 'fullResExport');
   wireCheck('settings-reduce-motion',  'reduceMotion');
   wireCheck('settings-date-stamp',     'dateStamp');
   wireCheck('settings-frame-stamp',    'frameStamp');
@@ -214,7 +216,8 @@ export function initSettings(state, { onSettingsChange, onVibeOrderChange }) {
     syncSeg(document.getElementById('settings-theme'),               s.theme ?? 'dark');
     applyTheme(s.theme ?? 'dark');
     syncCheck('settings-confirm-remove', s.confirmRemove);
-    syncCheck('settings-full-res-ios',   s.fullResIOS);
+    syncCheck('settings-auto-date',      s.autoDateFromFile);
+  syncCheck('settings-full-res-export', s.fullResExport);
     syncCheck('settings-reduce-motion',  s.reduceMotion);
     syncCheck('settings-date-stamp',     s.dateStamp);
     syncCheck('settings-frame-stamp',    s.frameStamp);

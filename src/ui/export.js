@@ -28,6 +28,18 @@ function downloadBlob(blob, filename) {
 // screen". The correct way to hand files to the user there is the Web Share
 // API: the share sheet offers "Save Image" / "Save to Files", and one sheet
 // can carry a whole batch. Anchor downloads remain the desktop fallback.
+//
+// IMPORTANT: this is an iOS-only workaround. Desktop Chrome and Android Chrome
+// now ALSO report `navigator.canShare({files}) === true`, so a capability-only
+// check wrongly routed them to the OS share sheet — which on desktop has no
+// "save to disk" target at all. On those platforms `<a download>` works and
+// saves straight to disk, so we must keep them on the download path.
+
+/** iOS / iPadOS (which reports as MacIntel with a touch screen). */
+function isIOS() {
+  return /iP(hone|ad|od)/.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
 
 /** Whether the share-sheet path can deliver these files. */
 export function canShareFiles(files) {
@@ -39,6 +51,14 @@ export function canShareFiles(files) {
 }
 
 /**
+ * Whether to deliver via the OS share sheet rather than a download. Only iOS
+ * needs this (see the note above); everywhere else we download.
+ */
+function shouldShareFiles(files) {
+  return isIOS() && canShareFiles(files);
+}
+
+/**
  * Hand files to the user: share sheet where supported, downloads otherwise.
  * @param {File[]} files
  * @returns {Promise<'shared'|'cancelled'|'blocked'|'downloaded'>}
@@ -46,7 +66,7 @@ export function canShareFiles(files) {
  *   render) — the caller should retry from inside a fresh tap.
  */
 export async function deliverFiles(files) {
-  if (!canShareFiles(files)) {
+  if (!shouldShareFiles(files)) {
     for (let i = 0; i < files.length; i++) {
       downloadBlob(files[i], files[i].name);
       // Small gap so multi-file downloads don't trample each other.

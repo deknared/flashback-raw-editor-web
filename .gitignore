@@ -16,6 +16,10 @@ test-assets/
 # Local planning docs (never published)
 PLAN*.md
 PHASE1_FINDINGS.md
+FINDINGS_*.md
+
+# Reference snapshots of the upstream desktop app (research only, never published)
+.op165/
 
 # Vite cache
 .vite/

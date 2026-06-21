@@ -10,7 +10,7 @@
 // Bumping CACHE_NAME changes this file's bytes, which makes the browser detect
 // an updated worker, install it, and purge older caches in `activate`. Bump it
 // whenever the precache list or strategy changes.
-const CACHE_NAME = 'flashback-v17';  // v17: orange accent color + icons, help sheet update
+const CACHE_NAME = 'flashback-v28';  // v28: v1.2.0 — Deselect All label, README features/changelog
 
 // Files to pre-cache on install (app shell).
 const PRECACHE = [
@@ -24,11 +24,19 @@ const PRECACHE = [
 ];
 
 // ─── Install: pre-cache app shell ───────────────────────────────────────────
+// NOTE: we deliberately do NOT call skipWaiting() here. A freshly installed
+// worker WAITS so the running app can show an "update available" banner and let
+// the user choose when to reload (rather than swapping the bundle out from under
+// them mid-edit). The page posts 'skipWaiting' when the user taps Reload.
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE))
   );
-  self.skipWaiting();
+});
+
+// The page tells us to activate now (user tapped "Reload" on the update banner).
+self.addEventListener('message', (event) => {
+  if (event.data === 'skipWaiting') self.skipWaiting();
 });
 
 // ─── Activate: clean up old caches ──────────────────────────────────────────

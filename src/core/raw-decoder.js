@@ -22,7 +22,7 @@ import {
   FLASHBACK_EXPOSURE_COMP_EV, LIBRAW_PREMUL,
   ASN_D50, ASN_LIBRAW_CAL, FM1, FM1_WB_TO_ACESCG, computeFlashbackCCM,
 } from './config.js';
-import { decodeOne35HalfSize } from './one35-dng.js';
+import { decodeOne35HalfSize, decodeOne35Full } from './one35-dng.js';
 
 // Use the pure-JS Bayer decoder for Flashback half-size decodes.
 // Set to false to fall back to libraw-wasm for comparison/debugging.
@@ -425,13 +425,16 @@ export class RawDecoder {
       }
       const isFlashback = FLASHBACK_RE.test(make.toLowerCase());
 
-      // ── Pure-JS Bayer decoder path (Flashback half-size) ───────────────────
-      // Decodes the One35's uncompressed 10-bit Bayer directly, matching rawpy
-      // half_size=True pixel-for-pixel. Eliminates LIBRAW_PREMUL and
-      // GREEN_SHADOW/GREEN_HL corrections — those only existed to patch up
-      // libraw-wasm's systematic decode errors.
-      if (isFlashback && halfSize && USE_JS_DECODER) {
-        let { pixels, width, height } = decodeOne35HalfSize(buffer);
+      // ── Pure-JS Bayer decoder path (Flashback) ─────────────────────────────
+      // Decodes the One35's uncompressed 10-bit Bayer directly. Half-size matches
+      // rawpy half_size=True pixel-for-pixel; full-size demosaics the same mosaic
+      // (decodeOne35Full) with identical calibration, so a full-res export matches
+      // the preview. Both eliminate LIBRAW_PREMUL and GREEN_SHADOW/GREEN_HL —
+      // corrections that only existed to patch up libraw-wasm's decode errors.
+      if (isFlashback && USE_JS_DECODER) {
+        let { pixels, width, height } = halfSize
+          ? decodeOne35HalfSize(buffer)
+          : decodeOne35Full(buffer);
 
         const margin = FLASHBACK_EDGE_CROP;
         if (width > margin * 4 && height > margin * 4)

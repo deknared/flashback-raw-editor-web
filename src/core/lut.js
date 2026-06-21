@@ -90,11 +90,17 @@ export class GpuLut {
    * @param {GPUBuffer} buffer  Storage buffer of LUT data (read-only in shader)
    * @param {number}    size    LUT_3D_SIZE (e.g. 65)
    * @param {string}    [url]   Source URL (for cache identity)
+   * @param {'native'|'srgb'} [inputSpace]  What space the LUT expects as INPUT.
+   *   'native' — ACEScct-encoded ACEScg (our built-in/procedural LUTs are
+   *   authored for this). 'srgb' — a display-referred sRGB / Rec.709 image, as
+   *   ordinary creative "Photo LUTs" expect; the processor feeds these the
+   *   Natural display render instead of ACEScct so they "just work".
    */
-  constructor(buffer, size, url) {
-    this.buffer = buffer;
-    this.size   = size;
-    this.url    = url ?? null;
+  constructor(buffer, size, url, inputSpace = 'native') {
+    this.buffer     = buffer;
+    this.size       = size;
+    this.url        = url ?? null;
+    this.inputSpace = inputSpace;
   }
   destroy() { this.buffer?.destroy(); this.buffer = null; }
 }
@@ -103,19 +109,21 @@ export class GpuLut {
  * Upload parsed LUT data to a persistent GPU storage buffer.
  * @param {{ size: number, data: Float32Array }} lut
  * @param {string} [url]
+ * @param {'native'|'srgb'} [inputSpace]
  * @returns {GpuLut}
  */
-export function uploadLut(lut, url) {
+export function uploadLut(lut, url, inputSpace = 'native') {
   const buffer = createF32Buffer(lut.data, GPUBufferUsage.STORAGE);
-  return new GpuLut(buffer, lut.size, url);
+  return new GpuLut(buffer, lut.size, url, inputSpace);
 }
 
 /**
  * Fetch a .cube file and upload it to the GPU in one step.
  * @param {string} url
+ * @param {'native'|'srgb'} [inputSpace]
  * @returns {Promise<GpuLut>}
  */
-export async function loadGpuLut(url) {
+export async function loadGpuLut(url, inputSpace = 'native') {
   const parsed = await loadCube(url);
-  return uploadLut(parsed, url);
+  return uploadLut(parsed, url, inputSpace);
 }

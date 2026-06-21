@@ -1,6 +1,6 @@
 {
   "name": "flashback-raw-editor-web",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Flashback One35 v2 RAW editor — Progressive Web App",
   "type": "module",
   "scripts": {

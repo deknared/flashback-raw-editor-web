@@ -24,9 +24,13 @@
 <div id="app">
 
   <!-- ══════════════════════════════════════════════════════════
-       PREVIEW CANVAS — fills the entire screen
+       PREVIEW CANVAS — fills the photo region. The wrapper clips
+       pinch-zoom (a CSS transform on the canvas) to this region so
+       it can't bleed over the surrounding UI.
   ══════════════════════════════════════════════════════════ -->
-  <canvas id="preview-canvas" aria-label="Image preview"></canvas>
+  <div id="canvas-wrap">
+    <canvas id="preview-canvas" aria-label="Image preview"></canvas>
+  </div>
 
   <!-- ══════════════════════════════════════════════════════════
        EMPTY STATE — shown before any file is loaded
@@ -70,11 +74,19 @@
       open Files app → copy DNG → tap Open
     </p>
     <button id="info-btn-empty" class="text-link" type="button">ⓘ How it works</button>
+    <button id="whatsnew-btn-empty" class="text-link" type="button">✨ What's new</button>
     <div class="version-row">
       <span class="version-tag" id="version-tag" aria-label="App version"></span>
       <button id="refresh-btn" class="version-reload" type="button"
               aria-label="Reload app" title="Reload to get the latest version">⟳ Reload</button>
     </div>
+  </div>
+
+  <!-- Update-available banner (shown when a new service worker is waiting) -->
+  <div id="update-banner" class="update-banner hidden" role="status" aria-live="polite">
+    <span class="update-banner-text">A new version is available.</span>
+    <button id="update-reload-btn" class="update-banner-reload" type="button">Reload</button>
+    <button id="update-dismiss-btn" class="update-banner-dismiss" type="button" aria-label="Dismiss">✕</button>
   </div>
 
   <!-- ══════════════════════════════════════════════════════════
@@ -163,6 +175,20 @@
     <span id="file-pos" class="hidden" aria-label="Photo position"></span>
   </div>
 
+  <!-- Copy/paste + multi-select tools — own row (shown with 2+ photos) so it has
+       room and never gets squeezed by a long filename. -->
+  <div id="look-tools-row" class="hidden">
+    <div id="look-tools">
+      <button id="copy-look-btn" class="look-tool-btn" type="button" aria-label="Copy this look" title="Copy this look (profile + adjustments)">Copy</button>
+      <button id="paste-look-btn" class="look-tool-btn hidden" type="button" aria-label="Apply look" title="Apply the copied look">Apply</button>
+      <button id="paste-all-btn" class="look-tool-btn hidden" type="button" aria-label="Apply look to all photos" title="Apply the copied look to every photo">Apply all</button>
+      <button id="select-all-btn" class="look-tool-btn hidden" type="button" aria-label="Select all photos" title="Select all photos">Select All</button>
+      <button id="exclude-sel-btn" class="look-tool-btn hidden" type="button" aria-label="Exclude selected from export" title="Exclude/include selected from batch export">Exclude</button>
+      <button id="remove-sel-btn" class="look-tool-btn hidden" type="button" aria-label="Remove selected from queue" title="Remove selected photos">Remove</button>
+      <button id="select-btn" class="look-tool-btn hidden" type="button" aria-label="Select photos" title="Select multiple photos">Select</button>
+    </div>
+  </div>
+
   <!-- ══════════════════════════════════════════════════════════
        CONTROLS PANEL — solid block below the photo (never covers it).
        The effects panel overlays ONLY the controls area below the
@@ -188,8 +214,6 @@
         <span class="fx-head-title">Effects</span>
         <div class="fx-head-actions">
           <button id="reset-btn" class="fx-action-btn" type="button" aria-label="Reset adjustments" title="Reset adjustments">Reset All</button>
-          <button id="apply-all-btn" class="fx-action-btn" type="button" disabled
-                  title="Load 2+ photos to copy EXP/WB/tint across the whole roll">Apply All</button>
         </div>
       </div>
 
@@ -377,13 +401,43 @@
       </div>
       <div id="crop-straighten">
         <span class="crop-st-label">STRAIGHTEN</span>
-        <input type="range" id="straighten-range" min="-15" max="15" step="0.5" value="0" aria-label="Straighten angle">
+        <input type="range" id="straighten-range" min="-45" max="45" step="0.5" value="0" aria-label="Straighten angle">
         <span id="straighten-val">0°</span>
       </div>
       <div id="crop-actions">
         <button id="crop-cancel" class="btn-secondary" type="button">Cancel</button>
         <button id="crop-reset" class="btn-secondary" type="button">Reset</button>
         <button id="crop-done" class="btn-dialog-confirm" type="button">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       WHAT'S NEW SHEET — summarized patch notes per release
+  ══════════════════════════════════════════════════════════ -->
+  <div id="whatsnew-sheet" class="sheet" role="dialog" aria-modal="true" aria-label="What's new">
+    <div class="sheet-backdrop" data-close="whatsnew-sheet"></div>
+    <div class="sheet-panel">
+      <div class="sheet-grip"></div>
+      <header class="sheet-head">
+        <h2>What's new — <span id="whatsnew-version">v1.2.0</span></h2>
+        <button class="sheet-close" data-close="whatsnew-sheet" aria-label="Close">✕</button>
+      </header>
+      <div class="sheet-body">
+        <section>
+          <ul>
+            <li><b>Share looks</b> — export your current look to a file and import ones others share (Settings → Share Looks). Custom LUTs travel with the file.</li>
+            <li><b>Imported LUTs just work</b> — drop in any sRGB/Rec.709 photo LUT; it's colour-managed into the pipeline automatically.</li>
+            <li><b>Copy &amp; apply a look</b> across photos — copy from one frame, then apply to one, several (multi-select), or all.</li>
+            <li><b>Full-resolution export</b> on desktop &amp; Android, with a toggle in Settings.</li>
+            <li><b>Halation</b> rebuilt to match the desktop app — a three-scale glow that reddens outward.</li>
+            <li><b>Auto date stamp</b> from each photo's file date, plus a manual override.</li>
+            <li><b>Pinch-to-zoom</b> stays in the photo (no more accidental fullscreen), and an <b>update banner</b> tells you when a new version is ready.</li>
+          </ul>
+          <p style="margin-top:14px">
+            <a id="whatsnew-github" href="https://github.com/deknared/flashback-raw-editor-web" target="_blank" rel="noopener">Full changelog on GitHub →</a>
+          </p>
+        </section>
       </div>
     </div>
   </div>
@@ -429,10 +483,16 @@
           LUT. Tap a custom preset to load it; press and hold it to delete.</p>
           <p><b>Custom LUTs:</b> tap <b>＋ → Import LUT</b> to import a <b>.cube</b>
           file. It appears as a <b>◆ pill</b> and replaces the current vibe's colour
-          transform (effects stay). Press and hold the pill to delete.</p>
-          <p><b>Date stamp:</b> toggle under Effects to burn the photo's capture date
-          into the corner, 2000s-camera style. Applies to the preview and JPEG
-          exports (TIFF stays clean).</p>
+          transform (effects stay). Press and hold the pill to delete. Ordinary
+          sRGB / Rec.709 photo LUTs are colour-managed in automatically, so they
+          look right without any extra steps.</p>
+          <p><b>Share looks:</b> in <b>Settings → Share Looks</b>, <b>Export current
+          look</b> saves a small file (with any custom LUT bundled in) you can send to
+          others; <b>Import look</b> loads one back as a new preset.</p>
+          <p><b>Date stamp:</b> toggle it in <b>Settings → Stamp</b> to burn a date into
+          the corner, 2000s-camera style. One35 files don't record a capture date, so
+          <b>Auto date from file</b> uses each photo's file date; turn it off to set a
+          fixed date. Applies to the preview and JPEG exports (TIFF stays clean).</p>
         </section>
 
         <section>
@@ -490,9 +550,19 @@
             <li><b>Swipe up</b> on a thumbnail — remove it from the queue entirely (asks
             for confirmation first). This only removes it from this session — it does
             not delete the file from your device.</li>
-            <li><b>Apply adjustments to all photos</b> (under Effects) stamps the current
-            photo's profile, exposure, WB, and tint across the whole roll (rotation and
-            crop stay per-photo).</li>
+          </ul>
+          <p><b>Copy a look across photos.</b> With 2+ photos open, a toolbar appears under
+          the filename:</p>
+          <ul>
+            <li><b>Copy</b> — copies the current photo's look (profile + exposure/WB/tint).
+            The source photo and the Copy button outline in blue while it's “armed.”</li>
+            <li><b>Apply</b> — applies it to the photo you're viewing; <b>Apply all</b>
+            applies it to every other photo. A look can't be applied to itself, and the
+            copy resets after one apply.</li>
+            <li><b>Select</b> — pick several photos (tap to toggle, a ✓ shows top-right),
+            then <b>Apply</b> to just those, <b>Exclude/Include</b> them from batch export,
+            <b>Remove</b> them, or <b>All</b> to select everything. Rotation and crop stay
+            per-photo.</li>
           </ul>
         </section>
 
@@ -505,8 +575,10 @@
             Settings.</li>
             <li><b>JPEG</b> — 8-bit, great for sharing. Quality is adjustable in Settings.</li>
             <li><b>TIFF</b> — 16-bit, lossless, best for further editing in Lightroom etc.</li>
-            <li>Both export at <b>full resolution</b>. Saving opens the share sheet —
-            pick <b>Save Image</b> (Photos) or <b>Save to Files</b>.</li>
+            <li><b>Full-resolution export</b> (Settings) is on by default on desktop &amp;
+            Android; iPhone exports at an optimized size to stay within memory. On iPhone,
+            saving opens the share sheet — pick <b>Save Image</b> or <b>Save to Files</b>;
+            on desktop/Android it downloads.</li>
             <li>With 2+ photos loaded, a <b>Batch Export</b> button appears. It develops
             every <i>included</i> photo — each with its own profile and adjustments —
             and saves them together in one share sheet. Long-press it to pick the batch
@@ -522,7 +594,7 @@
             <li><b>Export</b> — format (JPEG / TIFF) and quality for single and batch export separately.</li>
             <li><b>Stamp Color</b> — colour of the date/frame number stamp.</li>
             <li><b>Reduce motion</b> — disables animations. Also respects the system accessibility setting.</li>
-            <li><b>Full-res export on iOS</b> — render at the sensor's full native resolution. Off by default to avoid out-of-memory crashes on large RAW files.</li>
+            <li><b>Full-resolution export</b> — render at the sensor's full native resolution (on by default). Turn off for faster, smaller exports if a device runs low on memory.</li>
           </ul>
         </section>
 
@@ -609,6 +681,15 @@
           </div>
         </section>
 
+        <section class="settings-section">
+          <h3 class="settings-section-title">Share Looks</h3>
+          <p class="settings-note" style="margin:0 0 10px">Export your current look as a file to share, or import one someone sent you. A bundled custom LUT travels with it.</p>
+          <div class="settings-row" style="gap:10px">
+            <button type="button" id="settings-export-profile" class="settings-text-btn">Export current look…</button>
+            <button type="button" id="settings-import-profile" class="settings-text-btn">Import look…</button>
+          </div>
+        </section>
+
         <section class="settings-section settings-section-collapse">
           <button class="settings-section-toggle" id="settings-vibe-order-toggle" type="button" aria-expanded="false">
             <h3 class="settings-section-title">Profile Order</h3>
@@ -672,6 +753,16 @@
             </label>
           </div>
           <div class="settings-row">
+            <div class="settings-label-group">
+              <span class="settings-label">Auto date from file</span>
+              <span class="settings-desc">Use each photo's file date (One35 DNGs don't record a capture date). Turn off to set a fixed date below.</span>
+            </div>
+            <label class="settings-switch">
+              <input type="checkbox" id="settings-auto-date">
+              <span class="settings-switch-track"></span>
+            </label>
+          </div>
+          <div class="settings-row">
             <span class="settings-label">Date</span>
             <input type="date" id="settings-date-input" class="settings-date-chip" aria-label="Stamp date">
           </div>
@@ -727,16 +818,28 @@
           </div>
           <div class="settings-row">
             <div class="settings-label-group">
-              <span class="settings-label">Full-res export on iOS</span>
-              <span class="settings-desc">Renders at the sensor's native resolution instead of a safe downscaled size. May crash on large RAW files.</span>
+              <span class="settings-label">Full-resolution export</span>
+              <span class="settings-desc">Render at the sensor's native resolution (desktop &amp; Android). Turn off for faster, smaller exports. iPhone always exports at the optimized size — full size exceeds iOS memory limits.</span>
             </div>
             <label class="settings-switch">
-              <input type="checkbox" id="settings-full-res-ios">
+              <input type="checkbox" id="settings-full-res-export">
               <span class="settings-switch-track"></span>
             </label>
           </div>
           <div class="settings-row" style="margin-top:4px">
             <button type="button" id="settings-reset-all" class="settings-text-btn settings-text-btn-danger">Reset all settings to defaults</button>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3 class="settings-section-title">About</h3>
+          <div class="settings-row">
+            <span class="settings-label">Version</span>
+            <span class="settings-value" id="settings-version">—</span>
+          </div>
+          <div class="settings-row">
+            <span class="settings-label">What's new</span>
+            <button type="button" id="settings-whatsnew-btn" class="settings-text-btn">View update notes</button>
           </div>
         </section>
 
@@ -759,6 +862,13 @@
   type="file"
   id="lut-input"
   accept=".cube,.CUBE"
+  hidden
+  aria-hidden="true"
+>
+<input
+  type="file"
+  id="profile-input"
+  accept=".flashback,.json,application/json"
   hidden
   aria-hidden="true"
 >

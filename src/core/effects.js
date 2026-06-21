@@ -30,12 +30,12 @@ import {
 import {
   GRAIN_TILE_SCALE, GRAIN_HIGHLIGHT_BIAS, GRAIN_BLUR_SIGMA,
   CNR_SIGMA_SPACE, CNR_SIGMA_COLOR, CNR_RADIUS, CNR_THR_GREEN, CNR_THR_OTHER,
+  HALATION_SCALES, HALATION_WARMTH_PCT,
 } from './config.js';
 
 import caUrl             from '../shaders/chromatic_aberration.wgsl?url';
 import vignetteUrl       from '../shaders/vignette.wgsl?url';
 import highlightsUrl     from '../shaders/highlights.wgsl?url';
-import halCombineUrl     from '../shaders/halation_combine.wgsl?url';
 import bloomSmallUrl     from '../shaders/bloom_small.wgsl?url';
 import highlightDesatUrl from '../shaders/highlight_desat.wgsl?url';
 import grainSampleUrl    from '../shaders/grain_sample.wgsl?url';
@@ -76,11 +76,10 @@ export class Effects {
     if (this._ready) return true;
     if (!isAvailable()) return false;
 
-    const [ca, vig, hi, halCombine, bloomSm, hdesat, gsample, blur, blend, grain, cnr] = await Promise.all([
+    const [ca, vig, hi, bloomSm, hdesat, gsample, blur, blend, grain, cnr] = await Promise.all([
       loadShaderModule(caUrl),
       loadShaderModule(vignetteUrl),
       loadShaderModule(highlightsUrl),
-      loadShaderModule(halCombineUrl),
       loadShaderModule(bloomSmallUrl),
       loadShaderModule(highlightDesatUrl),
       loadShaderModule(grainSampleUrl),
@@ -93,16 +92,13 @@ export class Effects {
     this._pipelines = {
       ca:           createComputePipeline(ca,         'main',          'fx-ca'),
       vignette:     createComputePipeline(vig,        'main',          'fx-vignette'),
-      bloom:        createComputePipeline(hi,         'main_bloom',    'fx-bloom-mask'),
       halation:     createComputePipeline(hi,         'main_halation', 'fx-halation-mask'),
-      halCombine:   createComputePipeline(halCombine, 'main',          'fx-hal-combine'),
       bloomDown:    createComputePipeline(bloomSm,    'main_down',     'fx-bloom-down'),
       bloomUpadd:   createComputePipeline(bloomSm,    'main_upadd',    'fx-bloom-upadd'),
       desat:        createComputePipeline(hdesat,     'main',          'fx-highlight-desat'),
       gsample:      createComputePipeline(gsample,    'main',          'fx-grain-sample'),
       blurH:        createComputePipeline(blur,       'main_h',        'fx-blur-h'),
       blurV:        createComputePipeline(blur,       'main_v',        'fx-blur-v'),
-      screen:       createComputePipeline(blend,      'main_screen',   'fx-screen'),
       add:          createComputePipeline(blend,      'main_add',      'fx-add'),
       unsharp:      createComputePipeline(blend,      'main_unsharp',  'fx-unsharp'),
       grain:        createComputePipeline(grain,      'main',          'fx-grain'),
@@ -320,33 +316,47 @@ export class Effects {
     const el = dispatchSize(count, 256);
     // Convert linear stops to ACEScct: (log2(0.18·2^stops) + 9.72) / 17.52
     const acescctThr = (stops) => (Math.log2(0.18 * Math.pow(2, stops)) + 9.72) / 17.52;
-    const linThr     = (stops) => 0.18 * Math.pow(2, stops);
 
     let cur = src;
     const A = getBuf('preA', count);
     const B = getBuf('preB', count);
 
-    // 1. Halation — single-pass red-orange highlight glow, additively blended.
+    // 1. Halation — three-scale reddening glow (desktop 1.6.5), additive in
+    //    linear light. Each scale gates highlights with a sigmoid on ACEScct-
+    //    encoded luma, tints them (red dominant, green/blue falling off with
+    //    warmth + the scale weight + user strength baked in), blurs at a growing
+    //    radius, and is summed onto the image. Wider scales use a higher
+    //    threshold so only the brightest sources feed the broad halo.
     if (c.enable_halation && (c.halation_strength ?? 0) > 0) {
+      const strength  = c.halation_strength;
+      const warmthExp = Math.max(0, c.halation_warmth_pct ?? HALATION_WARMTH_PCT) / 100;
+      const baseThr   = acescctThr(c.halation_threshold_stops ?? 4.5);
+      const baseR     = Math.max(1, c.halation_blur_radius ?? 8) * s;
+      const K         = 20.0;
       const mask = getBuf('mask', count);
       const tmp  = getBuf('tmp',  count);
-      const u = createUniformBuffer(new Float32Array([
-        w, h, linThr(c.halation_threshold_stops ?? 4.0), c.halation_strength,
-      ]));
-      runCompute(this._pipelines.halation, [
-        { binding: 0, resource: { buffer: cur } },
-        { binding: 1, resource: { buffer: mask } },
-        { binding: 2, resource: { buffer: u } },
-      ], px);
-      u.destroy();
-      this._blur(mask, mask, tmp, w, h, count, Math.max(1, c.halation_blur_radius ?? 4) * s);
-      const dst = (cur === A) ? B : A;
-      runCompute(this._pipelines.add, [
-        { binding: 0, resource: { buffer: cur } },
-        { binding: 1, resource: { buffer: mask } },
-        { binding: 2, resource: { buffer: dst } },
-      ], el);
-      cur = dst;
+      const halSrc = cur;                       // all scales read the original image
+      for (const [radMult, thrOff, weight, gf, bf] of HALATION_SCALES) {
+        const ws = weight * strength;
+        const u = createUniformBuffer(new Float32Array([
+          w, h, Math.min(baseThr + thrOff, 0.98), 0,                         // width,height,threshold,(strength unused)
+          ws, ws * Math.pow(gf, warmthExp), ws * Math.pow(bf, warmthExp), K,  // tint.rgb, sigmoid k
+        ]));
+        runCompute(this._pipelines.halation, [
+          { binding: 0, resource: { buffer: halSrc } },
+          { binding: 1, resource: { buffer: mask } },
+          { binding: 2, resource: { buffer: u } },
+        ], px);
+        u.destroy();
+        this._blur(mask, mask, tmp, w, h, count, baseR * radMult);
+        const dst = (cur === A) ? B : A;        // accumulate onto the running image
+        runCompute(this._pipelines.add, [
+          { binding: 0, resource: { buffer: cur } },
+          { binding: 1, resource: { buffer: mask } },
+          { binding: 2, resource: { buffer: dst } },
+        ], el);
+        cur = dst;
+      }
     }
 
     // 2. Vignette (in place, linear — cool periphery, no upper clamp)

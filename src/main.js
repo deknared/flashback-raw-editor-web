@@ -21,10 +21,11 @@ import {
   saveCustomLut, listCustomLuts, getCustomLut, deleteCustomLut,
 } from './core/idb.js';
 import { RawDecoder } from './core/raw-decoder.js';
-import { init as initGPU } from './core/gpu.js';
+import { init as initGPU, getInitError } from './core/gpu.js';
 import { FlashbackProcessor } from './core/processor.js';
 import { loadGpuLut, parseCube, uploadLut } from './core/lut.js';
 import { generateLut } from './core/procedural-luts.js';
+import { buildProfile, serializeProfile, parseProfile } from './core/profile-io.js';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -63,6 +64,10 @@ const state = {
   _current:     0,      // index into _queue of the photo on screen
   _perImage:    [],     // per-photo { adjust, rotation } (parallel to _queue)
   _excluded:    new Set(), // indices excluded from batch export
+  _lookClipboard: null, // copied look { vibeId, adjust } — armed for paste (UI-2)
+  _copySource:  -1,     // index the look was copied from (outlined; can't paste onto it)
+  _selectMode:  false,  // filmstrip multi-select mode (UI-3)
+  _selected:    new Set(), // selected photo indices while in select mode
 };
 
 // ─── DOM references ───────────────────────────────────────────────────────────
@@ -113,6 +118,20 @@ if ('serviceWorker' in navigator) {
     // Production: register the offline cache.
     navigator.serviceWorker.register('/sw.js').then((reg) => {
       console.log('[sw] Registered, scope:', reg.scope);
+
+      // Update flow: a new worker installs but WAITS (sw.js no longer
+      // skipWaiting's on install). Surface a banner so the user reloads when
+      // they're ready, instead of swapping the bundle mid-edit. Only when a
+      // controller already exists (i.e. this is an update, not first install).
+      const offerUpdate = () => { if (navigator.serviceWorker.controller) showUpdateBanner(reg); };
+      if (reg.waiting) offerUpdate();
+      reg.addEventListener('updatefound', () => {
+        const sw = reg.installing;
+        if (!sw) return;
+        sw.addEventListener('statechange', () => {
+          if (sw.state === 'installed') offerUpdate();
+        });
+      });
     }).catch((err) => {
       console.warn('[sw] Registration failed:', err);
     });
@@ -155,13 +174,35 @@ if ('serviceWorker' in navigator) {
   }
 }
 
+// Show the "update available" banner. Tapping Reload tells the waiting worker to
+// activate; the controllerchange handler above then reloads into the new build.
+let _updateBannerShown = false;
+function showUpdateBanner(reg) {
+  if (_updateBannerShown) return;
+  _updateBannerShown = true;
+  const activate = () => (reg.waiting ?? reg.installing)?.postMessage('skipWaiting');
+  // Top banner.
+  const banner = $('update-banner');
+  if (banner) {
+    banner.classList.remove('hidden');
+    $('update-reload-btn')?.addEventListener('click', () => {
+      $('update-reload-btn').textContent = 'Updating…';
+      activate();
+    }, { once: true });
+    $('update-dismiss-btn')?.addEventListener('click', () => banner.classList.add('hidden'), { once: true });
+  }
+}
+
 // ─── WebGPU Init ──────────────────────────────────────────────────────────────
 
 (async () => {
   const device = await initGPU();
   if (!device) {
-    console.warn('[app] WebGPU unavailable.');
-    showToast('WebGPU unavailable — update to iOS 26+ to use this app', 5000, true);
+    const reason = getInitError() || 'WebGPU is unavailable on this browser/device.';
+    console.warn('[app] WebGPU unavailable:', reason);
+    // Show the real reason (not an iOS-only message) so desktop users can act on
+    // it — and so a hard-to-reproduce failure can be reported back accurately.
+    showToast(`WebGPU unavailable — ${reason}`, 8000, true);
     return;
   }
   console.log('[app] WebGPU available — initialising GPU pipeline.');
@@ -275,11 +316,15 @@ async function ensureLutByPath(path) {
       if (path.startsWith('custom:')) {
         const rec = await getCustomLut(path.slice(7));
         if (!rec) throw new Error('imported LUT not found');
-        lut = uploadLut({ size: rec.size, data: rec.data }, path);
+        // Imported LUTs are treated as display-referred sRGB/Rec.709 by default
+        // (what ordinary "Photo LUTs" are authored for) so they just work; the
+        // processor feeds them the Natural render instead of ACEScct. Records
+        // saved before this flag existed are also creative LUTs → default 'srgb'.
+        lut = uploadLut({ size: rec.size, data: rec.data }, path, rec.inputSpace ?? 'srgb');
       } else if (path.startsWith('proc:')) {
-        lut = uploadLut(generateLut(path.slice(5)), path);   // generated in JS
+        lut = uploadLut(generateLut(path.slice(5)), path, 'native');   // generated in JS, ACEScct space
       } else {
-        lut = await loadGpuLut(path);
+        lut = await loadGpuLut(path, 'native');   // bundled LUTs are authored for ACEScct
       }
       state._lutCache[path] = lut;
       console.log(`[app] LUT uploaded: ${path} (size ${lut.size})`);
@@ -402,6 +447,17 @@ function closeHelp() { helpSheet?.classList.remove('open'); }
 infoBtn?.addEventListener('click', openHelp);
 infoBtnEmpty?.addEventListener('click', openHelp);
 helpSheet?.querySelectorAll('[data-close="help-sheet"]').forEach((el) => el.addEventListener('click', closeHelp));
+
+// ─── What's New (patch notes) ──────────────────────────────────────────────────
+const whatsNewSheet = $('whatsnew-sheet');
+function openWhatsNew()  { whatsNewSheet?.classList.add('open'); }
+function closeWhatsNew() { whatsNewSheet?.classList.remove('open'); }
+$('whatsnew-btn-empty')?.addEventListener('click', openWhatsNew);
+$('settings-whatsnew-btn')?.addEventListener('click', () => {
+  $('settings-overlay')?.classList.remove('open');   // get out from under the sheet
+  openWhatsNew();
+});
+whatsNewSheet?.querySelectorAll('[data-close="whatsnew-sheet"]').forEach((el) => el.addEventListener('click', closeWhatsNew));
 
 // ─── Custom presets ("save your look as a profile") ───────────────────────────
 
@@ -678,6 +734,9 @@ lutInput?.addEventListener('change', async (e) => {
       name: file.name.replace(/\.cube$/i, '').slice(0, 24),
       size: parsed.size,
       data: parsed.data,
+      // Imported LUTs are display-referred sRGB/Rec.709 by default (standard
+      // Photo LUTs) — the processor bridges our ACEScg render into that space.
+      inputSpace: 'srgb',
     };
     await saveCustomLut(rec);
     hideLoading();
@@ -689,6 +748,106 @@ lutInput?.addEventListener('change', async (e) => {
     console.error('[app] LUT import failed:', err);
     showToast(`LUT import failed — ${err.message ?? 'invalid .cube?'}`, 4000, true);
   }
+});
+
+// ─── Profile export / import (share looks) ────────────────────────────────────
+// A "profile" is the portable form of a look: base vibe + effect config + core
+// adjustments, with any custom LUT bundled inline so the file is self-contained.
+// Export downloads (or shares, on iOS) a .flashback file; import creates a new
+// preset and applies it. See core/profile-io.js for the container format.
+
+async function exportCurrentProfile() {
+  const activePreset = listPresets().find((p) => p.id === state.activePresetId);
+  const defaultName = activePreset?.name
+    ?? vibeStrip?.querySelector(`.vibe-pill[data-vibe="${state.activeVibe}"]`)?.textContent?.trim()
+    ?? state.activeVibe;
+  const name = await showDialog({
+    title: 'Export look',
+    message: 'Name this look — it downloads as a .flashback file you can share.',
+    input: true,
+    placeholder: 'Look name',
+    value: defaultName,
+    confirmLabel: 'Export',
+  });
+  if (!name) return;
+
+  // Bundle the custom LUT (with its colour-space flag) if the look uses one.
+  let lut = null;
+  const lutPath = state.config?.lut_path;
+  if (typeof lutPath === 'string' && lutPath.startsWith('custom:')) {
+    const rec = await getCustomLut(lutPath.slice(7));
+    if (rec) lut = { name: rec.name, size: rec.size, data: rec.data, inputSpace: rec.inputSpace ?? 'srgb' };
+  }
+
+  const profile = buildProfile({
+    name: name.slice(0, 24),
+    baseVibe: (state.activeVibe in VIBE_PRESETS) ? state.activeVibe : 'disposable',
+    config: { ...state.config },
+    adjust: { ...state.adjust },
+    lut,
+  }, buildId);
+
+  // Plain `.json` so every OS/file-picker handles, previews, and opens it; the
+  // `fbrewebapp_` prefix keeps it recognisably ours without a custom extension.
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'look';
+  const file = new File([serializeProfile(profile)], `fbrewebapp_${slug}.json`, { type: 'application/json' });
+  await deliverFiles([file]);
+  showToast(`Exported “${name.slice(0, 24)}”`);
+}
+
+async function importProfileFile(file) {
+  try {
+    showLoading(`Importing ${file.name}…`);
+    const profile = parseProfile(await file.text());
+
+    // Bundled custom LUT → save as a fresh import and point the look at it.
+    let lutPath = profile.config?.lut_path;
+    if (profile.lut) {
+      const rec = {
+        id:         'l' + Date.now().toString(36),
+        name:       profile.lut.name,
+        size:       profile.lut.size,
+        data:       profile.lut.data,
+        inputSpace: profile.lut.inputSpace,
+      };
+      await saveCustomLut(rec);
+      lutPath = `custom:${rec.id}`;
+      await renderLutPills();
+    }
+
+    const preset = {
+      id: 'p' + Date.now().toString(36),
+      name: profile.name,
+      baseVibe: (profile.baseVibe && profile.baseVibe in VIBE_PRESETS) ? profile.baseVibe : 'disposable',
+      config: { ...profile.config, ...(lutPath ? { lut_path: lutPath } : {}) },
+      adjust: { ...profile.adjust },
+    };
+    savePreset(preset);
+    renderPresetPills();
+    hideLoading();
+    loadPreset(preset);
+    showToast(`Imported “${preset.name}”`);
+  } catch (err) {
+    hideLoading();
+    console.error('[app] profile import failed:', err);
+    showToast(`Import failed — ${err.message ?? 'invalid profile'}`, 4000, true);
+  }
+}
+
+const profileInput = $('profile-input');
+profileInput?.addEventListener('change', (e) => {
+  const file = e.target.files?.[0];
+  profileInput.value = '';
+  if (file) importProfileFile(file);
+});
+$('settings-export-profile')?.addEventListener('click', () => {
+  // Close Settings first so its sheet doesn't cover the export name dialog / share sheet.
+  $('settings-overlay')?.classList.remove('open');
+  exportCurrentProfile();
+});
+$('settings-import-profile')?.addEventListener('click', () => {
+  $('settings-overlay')?.classList.remove('open');
+  profileInput?.click();
 });
 
 // ─── Effects Panel Toggle ─────────────────────────────────────────────────────
@@ -916,6 +1075,7 @@ initSettings(state, {
     state.dateStamp  = !!settings.dateStamp;
     state.frameStamp = !!settings.frameStamp;
     state.dateFormat = settings.dateFormat  ?? 'YYMMDD';
+    state.autoDateFromFile = settings.autoDateFromFile ?? true;
     state.customDate = settings.customDate  ?? null;
     if (state.hasImage) triggerRender(false);
   },
@@ -928,6 +1088,7 @@ state.jpegQuality = (state.settings.jpegQuality ?? 95) / 100;
 state.dateStamp  = !!state.settings.dateStamp;
 state.frameStamp = !!state.settings.frameStamp;
 state.dateFormat = state.settings.dateFormat ?? 'YYMMDD';
+state.autoDateFromFile = state.settings.autoDateFromFile ?? true;
 state.customDate = state.settings.customDate ?? null;
 
 if (state.settings.reduceMotion) document.body.classList.add('reduce-motion');
@@ -1061,7 +1222,8 @@ canvas?.addEventListener('touchmove', (e) => {
     if (zoom.scale === 1) { zoom.tx = 0; zoom.ty = 0; }
     _moved = true;
     applyZoom();
-    if (zoom.scale > 1.01) enterZen();
+    // Pinch zooms within the photo region only — it no longer auto-enters zen
+    // (fullscreen). Zen stays an explicit gesture (zen button, or tap at 1×).
     e.preventDefault();
   } else if (e.touches.length === 1 && zoom.scale > 1) {
     zoom.tx = _panTx + (e.touches[0].clientX - _panX);
@@ -1100,15 +1262,6 @@ document.addEventListener('touchend', (e) => {
 function toggleZen() {
   state.isZen = !state.isZen;
   document.body.classList.toggle('zen', state.isZen);
-  requestAnimationFrame(() => {
-    if (state.hasImage && state.processorReady) triggerRender(false);
-  });
-}
-
-function enterZen() {
-  if (state.isZen) return;
-  state.isZen = true;
-  document.body.classList.add('zen');
   requestAnimationFrame(() => {
     if (state.hasImage && state.processorReady) triggerRender(false);
   });
@@ -1273,7 +1426,7 @@ async function handleFiles(files) {
   // Fresh photos start with fresh adjustments — sliders centred on 0 (the
   // per-image model: adjustments belong to a photo, not to the session).
   state.adjust = defaultAdjust();
-  state.crop = { angle: 0, x: 0, y: 0, w: 1, h: 1 };
+  state.crop = defaultCropRect();
   _syncCoreSliders();
   syncUserSettingsToProcessor();
 
@@ -1302,7 +1455,9 @@ function renderPhotoStrip() {
     const btn = document.createElement('button');
     btn.type = 'button';
     const excludedClass = state._excluded.has(i) ? ' excluded' : '';
-    btn.className = 'strip-thumb' + (i === state._current ? ' active' : '') + excludedClass;
+    const selectedClass = state._selected.has(i) ? ' selected' : '';
+    const sourceClass   = (i === state._copySource) ? ' copy-source' : '';
+    btn.className = 'strip-thumb' + (i === state._current ? ' active' : '') + excludedClass + selectedClass + sourceClass;
     btn.title = f.name;
     btn.setAttribute('aria-label', `Photo ${i + 1}: ${f.name}`);
     const cvs = document.createElement('canvas');
@@ -1320,6 +1475,7 @@ function renderPhotoStrip() {
     let _suppressSelect = false;
     btn.addEventListener('click', () => {
       if (_suppressSelect) { _suppressSelect = false; return; }
+      if (state._selectMode) { toggleSelected(i); return; }   // select instead of navigate
       selectPhoto(i);
     });
     // Long-press → toggle exclude/include from batch
@@ -1337,6 +1493,7 @@ function renderPhotoStrip() {
       _tMoved = false; _tDragging = false;
       btn.style.transition = 'none';
       _pressTimer = setTimeout(() => {
+        if (state._selectMode) return;   // long-press exclude is disabled while selecting
         if (!_tMoved) { _suppressSelect = true; toggleExcluded(i); if (navigator.vibrate) navigator.vibrate(8); }
       }, 600);
     }, { passive: true });
@@ -1355,6 +1512,7 @@ function renderPhotoStrip() {
       const dy = _tStartY - e.changedTouches[0].clientY;
       const dx = Math.abs(e.changedTouches[0].clientX - _tStartX);
       _resetBtnTransform();
+      if (state._selectMode) return;   // swipe-to-remove disabled while selecting
       if (dy > 44 && dy > dx) {
         const fname = state._queue[i]?.name ?? `Photo ${i + 1}`;
         const ok = await showDialog({
@@ -1406,6 +1564,14 @@ async function removeFromQueue(idx) {
   const shiftedEx = new Set();
   state._excluded.forEach((v) => { shiftedEx.add(v > idx ? v - 1 : v); });
   state._excluded = shiftedEx;
+  // Re-index the selection the same way; drop the removed photo.
+  state._selected.delete(idx);
+  const shiftedSel = new Set();
+  state._selected.forEach((v) => { shiftedSel.add(v > idx ? v - 1 : v); });
+  state._selected = shiftedSel;
+  // Copy source: disarm if it was removed, else shift its index to stay correct.
+  if (state._copySource === idx) disarmCopy();
+  else if (state._copySource > idx) state._copySource--;
   // Re-index pixel + preview caches: drop removed entry, shift keys above it down.
   const newCache = new Map();
   _pixelCache.forEach((v, k) => { if (k !== idx) newCache.set(k > idx ? k - 1 : k, v); });
@@ -1420,6 +1586,7 @@ async function removeFromQueue(idx) {
   if (!wasCurrent && idx < state._current) state._current--;
   else if (wasCurrent) state._current = Math.min(state._current, state._queue.length - 1);
   updateBatchButton();
+  updateFilePos();       // refresh the "n / N" counter (and hide it when 1 left)
   renderPhotoStrip();
   redrawAllThumbs();     // restore canvas thumbnails from re-indexed cache
   generateThumbs();      // restart background decoder with correct new indices
@@ -1480,6 +1647,7 @@ async function selectPhoto(i) {
   saveCurrentImageState();
   state._current = i;
   markActiveThumb();
+  updateLookToolsUI();   // Apply visibility depends on whether current ≠ copy source
 
   // Stamp a token so background loads from a previous navigation are discarded
   // if the user taps another photo before they finish.
@@ -1487,7 +1655,7 @@ async function selectPhoto(i) {
 
   const saved = state._perImage[i];
   state.adjust = saved?.adjust ? { ...saved.adjust } : defaultAdjust();
-  state.crop = saved?.crop ? { ...saved.crop } : { angle: 0, x: 0, y: 0, w: 1, h: 1 };
+  state.crop = saved?.crop ? { ...saved.crop } : defaultCropRect();
   _syncCoreSliders();
 
   // Restore this photo's vibe BEFORE checking the cache so the key is correct.
@@ -1869,11 +2037,23 @@ let _exporting = false; // guard against double-tap while a render/encode runs
 const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent)
   || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-/** Render for export: full-res on desktop, resident-size on iOS. */
+/**
+ * Render for export. Full-resolution by default — the pure-JS full decoder
+ * (decodeOne35Full) shares the preview's calibration, so a full-res file matches
+ * what you see. The "Full-resolution export" setting can turn it off.
+ *
+ * iOS is the exception: a 12.8 MP render needs several ~150 MB GPU float buffers
+ * through the effects chain, which blows past iOS Safari's per-tab memory budget
+ * and gets the tab KILLED (the PWA "reloads to the start screen"). There's no
+ * catchable error for that, so we don't even attempt full-res on iOS — it always
+ * exports at the resident (preview) size, which is what the desktop reference app
+ * outputs anyway. Desktop/Android honor the setting.
+ */
 function renderForExport(opts = {}) {
-  return IS_IOS
-    ? state._processor.renderExport(opts)
-    : state._processor.renderExportFull(opts);
+  const wantFull = (state.settings?.fullResExport ?? false) && !IS_IOS;
+  return wantFull
+    ? state._processor.renderExportFull(opts)
+    : state._processor.renderExport(opts);
 }
 
 /** The look's name for export filenames: active preset name, else the vibe id. */
@@ -1894,10 +2074,13 @@ function withVibe(name) {
 /** Compose the post-export toast. */
 function exportSavedToast(kind, w, h) {
   const dims = `${w}×${h}`;
-  if (IS_IOS || state._processor?._lastExportFullRes) {
+  // Only flag a size caveat when the user WANTED full-res but the device couldn't
+  // fit it (a real fallback). If they turned full-res off, resident size is expected.
+  const wantedFull = state.settings?.fullResExport ?? false;
+  if (!wantedFull || state._processor?._lastExportFullRes) {
     showToast(`${kind} saved · ${dims}`);
   } else {
-    showToast(`${kind} saved · ${dims} (preview size — full-res was too large for memory)`, 5000);
+    showToast(`${kind} saved · ${dims} (full resolution didn't fit in memory — saved at preview size)`, 5000);
   }
 }
 
@@ -2013,7 +2196,7 @@ addLongPress(batchExportBtn, () => showFormatPicker('batch'),  () => runBatch())
 // single-file path (load → full-res render), so batch output matches what you'd
 // get exporting each one by hand. Per-file errors are skipped, not fatal.
 
-/** Show/hide the multi-photo controls (batch, apply-to-all) per queue size. */
+/** Show/hide the multi-photo controls (batch export, select) per queue size. */
 function updateBatchButton() {
   const n = state._queue?.length ?? 0;
   if (batchExportBtn) {
@@ -2021,26 +2204,185 @@ function updateBatchButton() {
     batchExportBtn.textContent = excl > 0 ? `Batch ${n - excl}/${n}` : `Batch ×${n}`;
     batchExportBtn.classList.toggle('hidden', n < 2);
   }
-  $('apply-all-btn')?.toggleAttribute('disabled', n < 2);
+  // Select (multi-photo) only makes sense with 2+ photos; leaving select mode
+  // when the queue drops below 2 keeps the UI consistent.
+  if (n < 2 && state._selectMode) exitSelectMode();
+  updateLookToolsUI();
 }
 
-// Copy the on-screen photo's adjustments + profile to every loaded photo.
-// Rotation stays per-photo. Crop stays per-photo.
-$('apply-all-btn')?.addEventListener('click', () => {
+// ── Copy / Paste look (UI-2) + multi-select (UI-3) ───────────────────────────
+// A "look" = the profile (vibe) + core adjustments (EXP/WB/tint/push). The flow
+// is an ARMED model: Copy snapshots the on-screen photo's look and outlines it as
+// the source; you then navigate to another photo (or pick several via Select) and
+// Paste. Paste targets the current selection, never the source, and disarms after
+// — so a look can't be pasted twice or onto itself. Rotation/crop stay per-photo.
+
+/** Reflect copy/select state across the look-tool buttons. */
+function updateLookToolsUI() {
   const n = state._queue?.length ?? 0;
-  if (n < 2) return;
-  saveCurrentImageState();
-  for (let i = 0; i < n; i++) {
-    state._perImage[i] = {
-      adjust:   { ...state.adjust },
-      rotation: state._perImage[i]?.rotation ?? 0,
-      crop:     state._perImage[i]?.crop ?? { angle: 0, x: 0, y: 0, w: 1, h: 1 },
-      vibeId:   state.activeVibe,
-    };
-    updateThumbBadge(i);   // refresh badge only — don't rebuild strip (clears canvas thumbs)
+  const armed = !!state._lookClipboard;
+  const sel = state._selectMode;
+  const show = (id, on) => $(id)?.classList.toggle('hidden', !on);
+  // The whole row only appears with 2+ photos (copy/paste is a multi-photo tool).
+  $('look-tools-row')?.classList.toggle('hidden', n < 2);
+  // Apply only shows when there's a real target that ISN'T the source: in select
+  // mode, a selected non-source photo; otherwise the current photo ≠ source. When
+  // you're sitting on the source, only "Apply all" shows — nudging you to pick
+  // another photo (or apply to the whole roll).
+  const hasApplyTarget = sel
+    ? [...state._selected].some((i) => i !== state._copySource)
+    : (state._current !== state._copySource);
+  show('copy-look-btn', !sel);                  // Copy hidden while selecting
+  show('paste-look-btn', armed && hasApplyTarget);
+  show('paste-all-btn', armed && !sel);         // quick apply-to-all when armed (no Select needed)
+  show('select-btn', true);
+  show('select-all-btn', sel);
+  show('exclude-sel-btn', sel);
+  show('remove-sel-btn', sel);
+  $('copy-look-btn')?.classList.toggle('active', armed);   // outline the armed Copy
+  const selBtn = $('select-btn');
+  if (selBtn) {
+    selBtn.textContent = sel ? (state._selected.size ? `Done (${state._selected.size})` : 'Done') : 'Select';
+    selBtn.classList.toggle('active', sel);
   }
-  if (state.hasImage) triggerRender(false);
-  showToast(`Profile + adjustments applied to all ${n} photos`);
+  // Exclude ↔ Include: if any selected photo is already excluded, offer to re-include.
+  const exBtn = $('exclude-sel-btn');
+  if (exBtn && sel) {
+    const anyExcluded = [...state._selected].some((i) => state._excluded.has(i));
+    exBtn.textContent = anyExcluded ? 'Include' : 'Exclude';
+  }
+  // Select All ↔ Deselect All: the button toggles, so label it for what it'll do.
+  const allBtn = $('select-all-btn');
+  if (allBtn && sel) allBtn.textContent = (state._selected.size === n && n > 0) ? 'Deselect All' : 'Select All';
+}
+
+/** Outline the photo a look was copied from (distinct from active/selected). */
+function markCopySource() {
+  photoStrip?.querySelectorAll('.strip-thumb.copy-source').forEach((el) => el.classList.remove('copy-source'));
+  if (state._copySource >= 0) {
+    photoStrip?.querySelectorAll('.strip-thumb')[state._copySource]?.classList.add('copy-source');
+  }
+}
+
+function armCopy() {
+  if (!state.hasImage) return;
+  saveCurrentImageState();
+  state._lookClipboard = { vibeId: state.activeVibe, adjust: { ...state.adjust } };
+  state._copySource = state._current;
+  markCopySource();
+  updateLookToolsUI();
+  showToast('Look copied — pick photos and apply');
+}
+function disarmCopy() {
+  state._lookClipboard = null;
+  state._copySource = -1;
+  markCopySource();
+  updateLookToolsUI();
+}
+
+/** Write a copied look onto one photo's per-image state + badge. */
+function pasteLookTo(i) {
+  const look = state._lookClipboard;
+  if (!look) return;
+  state._perImage[i] = {
+    adjust:   { ...look.adjust },
+    rotation: state._perImage[i]?.rotation ?? 0,
+    crop:     state._perImage[i]?.crop ?? { angle: 0, x: 0, y: 0, w: 1, h: 1 },
+    vibeId:   look.vibeId,
+  };
+  updateThumbBadge(i);
+}
+
+/** Apply the clipboard look to a set of indices, refreshing the live view too. */
+async function applyLookToIndices(indices) {
+  const look = state._lookClipboard;
+  if (!look) return;
+  const targets = indices.filter((i) => i !== state._copySource);   // never the source
+  if (!targets.length) { showToast('Pick a different photo to apply to'); return; }
+  saveCurrentImageState();
+  for (const i of targets) pasteLookTo(i);
+  if (targets.includes(state._current)) {
+    state.adjust = { ...look.adjust };
+    _syncCoreSliders();
+    await _applyVibeConfig(look.vibeId);
+    syncUserSettingsToProcessor();
+    if (state.hasImage) triggerRender(false);
+  }
+  showToast(targets.length === 1 ? 'Look applied' : `Look applied to ${targets.length} photos`);
+  if (state._selectMode) exitSelectMode();
+  disarmCopy();   // one paste per copy — resets the armed state
+}
+
+$('copy-look-btn')?.addEventListener('click', () => {
+  if (state._lookClipboard) disarmCopy();   // tap again to cancel
+  else armCopy();
+});
+
+$('paste-look-btn')?.addEventListener('click', () => {
+  if (!state._lookClipboard) return;
+  const targets = state._selectMode ? [...state._selected] : [state._current];
+  applyLookToIndices(targets);
+});
+$('paste-all-btn')?.addEventListener('click', () => {
+  if (!state._lookClipboard) return;
+  const n = state._queue?.length ?? 0;
+  applyLookToIndices([...Array(n).keys()]);   // applyLookToIndices excludes the source
+});
+
+// ── Multi-select mode (UI-3) ─────────────────────────────────────────────────
+function enterSelectMode() {
+  state._selectMode = true;
+  state._selected.clear();
+  document.body.classList.add('select-mode');
+  updateLookToolsUI();
+}
+function exitSelectMode() {
+  state._selectMode = false;
+  state._selected.clear();
+  document.body.classList.remove('select-mode');
+  photoStrip?.querySelectorAll('.strip-thumb.selected').forEach((el) => el.classList.remove('selected'));
+  updateLookToolsUI();
+}
+function toggleSelected(i) {
+  if (state._selected.has(i)) state._selected.delete(i); else state._selected.add(i);
+  photoStrip?.querySelectorAll('.strip-thumb')[i]?.classList.toggle('selected', state._selected.has(i));
+  updateLookToolsUI();
+}
+$('select-btn')?.addEventListener('click', () => {
+  if (state._selectMode) exitSelectMode(); else enterSelectMode();
+});
+$('select-all-btn')?.addEventListener('click', () => {
+  const n = state._queue?.length ?? 0;
+  const all = state._selected.size === n;   // toggle: select-all ↔ clear
+  state._selected = all ? new Set() : new Set([...Array(n).keys()]);
+  photoStrip?.querySelectorAll('.strip-thumb').forEach((el, i) => el.classList.toggle('selected', state._selected.has(i)));
+  updateLookToolsUI();
+});
+$('exclude-sel-btn')?.addEventListener('click', () => {
+  if (!state._selected.size) { showToast('Select photos first'); return; }
+  // Label is "Include" when any selected photo is already excluded → re-include all;
+  // otherwise "Exclude" → exclude all. (Matches updateLookToolsUI's dynamic label.)
+  const anyExcluded = [...state._selected].some((i) => state._excluded.has(i));
+  for (const i of state._selected) {
+    if (anyExcluded) state._excluded.delete(i); else state._excluded.add(i);
+    photoStrip?.querySelectorAll('.strip-thumb')[i]?.classList.toggle('excluded', state._excluded.has(i));
+  }
+  updateBatchButton();
+  showToast(anyExcluded ? `Included ${state._selected.size}` : `Excluded ${state._selected.size} from export`);
+});
+$('remove-sel-btn')?.addEventListener('click', async () => {
+  // Protect the copy source so you don't delete what you're pasting from.
+  const victims = [...state._selected].filter((i) => i !== state._copySource).sort((a, b) => b - a);
+  if (!victims.length) { showToast('Select photos to remove'); return; }
+  const ok = await showDialog({
+    title: `Remove ${victims.length} photo${victims.length > 1 ? 's' : ''}`,
+    message: 'Remove the selected photos from the queue? This can’t be undone.',
+    confirmLabel: 'Remove',
+    danger: true,
+  });
+  if (!ok) return;
+  for (const i of victims) removeFromQueue(i);   // descending order keeps indices valid
+  exitSelectMode();
 });
 
 
@@ -2103,7 +2445,8 @@ async function runBatch(overrideFormat) {
           _batchVibe = photoVibeId;
         }
         state._processor.setSettings(per?.adjust ?? defaultAdjust());
-        state.crop = per?.crop ? { ...per.crop } : { angle: 0, x: 0, y: 0, w: 1, h: 1 };
+        _stampDateOverrideMs = f?.lastModified ?? null;   // this file's date for its stamp
+        state.crop = per?.crop ? { ...per.crop } : defaultCropRect();
         const turns = (((per?.rotation ?? 0) % 4) + 4) % 4;
         for (let t = 0; t < turns; t++) state._processor.rotateClockwise();
         lastDone = i;
@@ -2125,6 +2468,7 @@ async function runBatch(overrideFormat) {
         console.error('[app] batch item failed:', f?.name, err);
       }
     }
+    _stampDateOverrideMs = null;   // back to the on-screen photo's own file date
     // Leave the canvas (and the strip/sliders) on the last image we processed.
     state._current = lastDone;
     markActiveThumb();
@@ -2253,19 +2597,33 @@ function triggerRender(interactive = true) {
 // Drawn on the preview and baked into JPEG exports (TIFF stays clean — it's
 // the "negative" for further editing).
 
-/** Effective [YYYY, MM, DD]: custom override → photo's EXIF date → today. */
+// Batch export sets this to the file being developed so each stamp gets its own
+// file date (state._current doesn't move during a batch). Null = use current photo.
+let _stampDateOverrideMs = null;
+
+const _ymd = (d) => [String(d.getFullYear()),
+                     String(d.getMonth() + 1).padStart(2, '0'),
+                     String(d.getDate()).padStart(2, '0')];
+
+/**
+ * Effective [YYYY, MM, DD]. One35 DNGs carry NO capture date (verified — only
+ * Make/Model/colour-calibration tags), so "auto" uses the file's modification
+ * time (File.lastModified) per photo. With auto off, the fixed custom date is
+ * used; failing everything, today.
+ */
 function effectiveDateParts() {
+  if (state.autoDateFromFile) {
+    const ms = _stampDateOverrideMs ?? state._queue?.[state._current]?.lastModified;
+    if (ms) return _ymd(new Date(ms));
+  }
   if (state.customDate) {
     const m = state.customDate.match(/(\d{4})-(\d{2})-(\d{2})/);
     if (m) return [m[1], m[2], m[3]];
   }
-  const exif = state._processor?._dateTaken;
+  const exif = state._processor?._dateTaken;   // none on One35, kept for other cameras
   const me = typeof exif === 'string' ? exif.match(/^(\d{4})[:-](\d{2})[:-](\d{2})/) : null;
   if (me) return [me[1], me[2], me[3]];
-  const d = new Date();   // most One35 DNGs carry no date → default to today
-  return [String(d.getFullYear()),
-          String(d.getMonth() + 1).padStart(2, '0'),
-          String(d.getDate()).padStart(2, '0')];
+  return _ymd(new Date());
 }
 
 /** Date text "'YY MM DD" or "'YY MM" — the classic film date-back order. */
@@ -2383,6 +2741,22 @@ function isCropDefault(c) {
 function coverScale(rad, W, H) {
   const c = Math.abs(Math.cos(rad)), s = Math.abs(Math.sin(rad));
   return c + Math.max(H / W, W / H) * s;
+}
+
+// Default crop (Settings → Default Crop) applied to freshly opened photos that
+// have no saved crop. The One35 sensor aspect is constant, so a fixed-aspect
+// crop rect is the same for every frame; use the decoded dims when available,
+// else the native sensor ratio (so it's correct even before the first decode).
+const ONE35_ASPECT = 4144 / 3088;
+const DEFAULT_CROP_ASPECTS = { '3:2': 1.5, '4:3': 4 / 3, '1:1': 1, '16:9': 16 / 9 };
+function defaultCropRect() {
+  const A = DEFAULT_CROP_ASPECTS[state.settings?.defaultCrop];
+  if (!A) return { angle: 0, x: 0, y: 0, w: 1, h: 1 };   // 'free' / unset → full frame
+  const imgW = state._processor?.width || 4144;
+  const imgH = state._processor?.height || 3088;
+  let w = 1, h = imgW / (A * imgH);
+  if (h > 1) { h = 1; w = (A * imgH) / imgW; }
+  return { angle: 0, x: (1 - w) / 2, y: (1 - h) / 2, w, h };
 }
 
 /** Bake crop+straighten into an ImageData (preview + JPEG). */
@@ -2762,12 +3136,37 @@ showResumeIfAvailable();
 
 // Show the build stamp on the empty state so a deploy can be confirmed synced.
 const buildId = (typeof __BUILD_ID__ !== 'undefined') ? __BUILD_ID__ : 'dev';
-const versionTag = $('version-tag');
-if (versionTag) versionTag.textContent = buildId;
-const helpVersion = $('help-version');
-if (helpVersion) helpVersion.textContent = buildId;
 
-console.log(`[app] Flashback RAW Editor ready — ${buildId}`);
+// Staging identifier: the staging Worker serves byte-identical code to
+// production, so mark it visibly (green logo + "Beta" title + version suffix)
+// to avoid confusing the two when testing. Detected from the hostname so no
+// build flag is needed — production ('flashback-raw-editor-web.…') is untouched.
+const IS_STAGING = /staging/i.test(location.hostname);
+if (IS_STAGING) {
+  document.body.classList.add('staging');
+  document.title = 'Flashback Editor — Beta';
+}
+const versionLabel = IS_STAGING ? `${buildId} Beta` : buildId;
+
+const versionTag = $('version-tag');
+if (versionTag) versionTag.textContent = versionLabel;
+const helpVersion = $('help-version');
+if (helpVersion) helpVersion.textContent = versionLabel;
+const settingsVersion = $('settings-version');
+if (settingsVersion) settingsVersion.textContent = versionLabel;
+const whatsNewVersion = $('whatsnew-version');
+if (whatsNewVersion) whatsNewVersion.textContent = buildId;
+
+// Auto-show the patch notes once after an update (version string changed since
+// last launch). Skipped on a first-ever install (no prior version stored).
+try {
+  const KEY = 'flashback:lastSeenVersion';
+  const seen = localStorage.getItem(KEY);
+  if (seen && seen !== buildId) setTimeout(() => openWhatsNew(), 600);
+  localStorage.setItem(KEY, buildId);
+} catch { /* storage unavailable — skip */ }
+
+console.log(`[app] Flashback RAW Editor ready — ${versionLabel}`);
 
 // Dev-only debug handle (never shipped): lets the dev console / test harness
 // poke app state and the processor directly.

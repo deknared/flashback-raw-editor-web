@@ -17,6 +17,14 @@ and installs to the iPhone Home Screen.
 > "Add to Home screen," though getting DNGs onto an Android device from the
 > camera hasn't been verified the way the iPhone Files-app flow has.
 
+> **Desktop Chrome/Edge: "WebGPU unavailable"?** WebGPU needs the browser's GPU
+> backend, which is off when **hardware acceleration is disabled**. Turn it on at
+> **Settings → System → "Use hardware acceleration when available"**, then relaunch
+> the browser. You can confirm the GPU backend is active at `chrome://gpu` (the
+> **WebGPU** line should read *"Hardware accelerated"*). Firefox/Floorp pick a GPU
+> differently and may work even when Chrome doesn't — but the fix is the Chrome
+> setting, not the browser.
+
 ## Screenshots
 
 | Natural | Disposable | Point & Shoot |
@@ -35,7 +43,8 @@ character, all rendered live on the GPU from the same RAW file.
 
 - The original already uses **WebGPU + WGSL** compute shaders, and WebGPU is a web
   standard — the shaders port to the browser largely unchanged.
-- **libraw-wasm** decodes DNG/RAW in the browser via WebAssembly.
+- One35 DNGs are decoded by a small **pure-JS** decoder calibrated to match the desktop;
+  **libraw-wasm** is the fallback for other RAW files.
 - No App Store, Xcode, or Swift — distribute a URL, install via "Add to Home Screen."
 
 ## Privacy
@@ -51,33 +60,39 @@ offline and it stops contacting the host entirely.
 desktop app (sensor CCM → ACEScct → 3D LUT → effects), running entirely in the browser.
 No upload, no waiting on a server, no account.
 
-### Six film looks, infinitely tunable
+### Eight film looks, infinitely tunable
 Natural, Disposable, Point & Shoot, Rangefinder, Monochrome, and Flashback V1 — each
-a colour-calibrated LUT with its own grain, halation, and vignette character — plus a
-procedural **Gold** grade with no `.cube` file needed. Drop in your own `.cube` for an
-exact match to any look, or dial in your own and save it as a one-tap preset.
+a colour-calibrated LUT with its own grain, halation, and vignette character — plus
+procedural **Gold** and **Expired Superia** grades with no `.cube` file needed. Dial in
+your own and save it as a one-tap preset.
+
+### Bring your own LUTs — and share looks
+Import any `.cube` file; ordinary sRGB / Rec.709 photo LUTs are colour-managed into the
+pipeline automatically, so they just work. **Export a look** to a small file (with its
+custom LUT bundled in) to share, and **import** looks others send you — all from
+Settings → Share Looks.
 
 ### Live, GPU-rendered effects
-Grain, halation, chromatic aberration, softness, sharpen, vignette, and bloom — all
-running in real time as you drag a slider, not baked in after the fact.
+Grain, three-scale halation, chromatic aberration, softness, sharpen, vignette, and
+bloom — all running in real time as you drag a slider, not baked in after the fact.
 
 ### Shoot a whole roll, edit every frame independently
 Open dozens of DNGs at once. Every thumbnail in the strip remembers **its own** profile,
-adjustments, crop, and rotation — switch between photos and nothing resets. Long-press a
-thumbnail to exclude it from the batch, swipe up to pull it from the queue entirely
-(with a confirmation, so nothing vanishes by accident). Dial in one shot and stamp the
-look across the whole roll in a tap, then export only the photos you actually want.
+adjustments, crop, and rotation — switch between photos and nothing resets. **Copy** a
+look from one frame and **Apply** it to another, to several (multi-select), or to the
+whole roll. Exclude or remove photos in bulk, then export only the ones you want.
 
 ### Edit like it's the real darkroom
-Exposure, white balance, tint, and push/pull. Crop and straighten with aspect presets
-and auto cover-scaling. Date and frame-number stamps styled like a 2000s camera's
-date-back. A histogram, before/after compare (just press and hold), pinch-to-zoom,
-rotate, and a distraction-free zen mode.
+Exposure, white balance, tint, and push/pull. Crop and straighten (±45°) with aspect
+presets and auto cover-scaling. Date and frame-number stamps styled like a 2000s camera's
+date-back. A histogram, before/after compare (just press and hold), pinch-to-zoom that
+stays in the photo, rotate, and a distraction-free zen mode.
 
-### Export full-resolution, or just install it and forget it
-JPEG (8-bit) or 16-bit TIFF, at full resolution, with automatic graceful fallback if
-the device is low on memory. Install it once and it runs **fully offline** forever
-after — your photos never leave the device, period.
+### Export, or just install it and forget it
+JPEG (8-bit) or 16-bit TIFF. **Full-resolution export** is an opt-in setting (desktop &
+Android; iPhone exports at an optimized size to stay within memory). The app tells you
+when an update is ready, and shows a "What's new" summary after each one. Install it once
+and it runs **fully offline** forever after — your photos never leave the device, period.
 
 ## Install on iPhone
 
@@ -185,11 +200,12 @@ src/
   core/
     gpu.js              WebGPU device + compute helpers (2D dispatch for big images)
     processor.js        Pipeline: decode → ACEScct intermediate → render/export
-    raw-decoder.js      libraw-wasm wrapper (half-size preview / full-size export)
-    one35-dng.js        Pure-JS Bayer decoder for One35 DNGs
+    raw-decoder.js      Decoder router: pure-JS One35 path + libraw-wasm fallback
+    one35-dng.js        Pure-JS One35 Bayer decoder (half-size + full-size demosaic)
     effects.js          GPU film-effect orchestrator (live chain + baked passes)
-    lut.js              3D LUT upload
-    procedural-luts.js  JS-generated LUT (the Gold look)
+    lut.js              3D LUT upload (+ sRGB/Rec.709 input bridge for imports)
+    procedural-luts.js  JS-generated LUTs (Gold, Expired Superia)
+    profile-io.js       Export / import a shareable look (.json, LUT bundled in)
     config.js           CCM/WB constants, vibe presets, defaults
     vibe-state.js       localStorage persistence (per-vibe + session)
   ui/
@@ -209,7 +225,7 @@ between already-viewed photos in the strip instant.
 
 | Feature            | Desktop      | Web app                          |
 |---------------------|--------------|-----------------------------------|
-| DNG processing     | LibRaw       | libraw-wasm (same lib, WASM)     |
+| DNG processing     | LibRaw       | pure-JS One35 decoder (libraw-wasm fallback) |
 | GPU shaders        | wgpu/WGSL    | WebGPU/WGSL (same shaders)       |
 | USB camera detect  | Yes          | No (iOS WebUSB unsupported)      |
 | DNG export         | Yes          | No (JPEG + 16-bit TIFF only)     |
@@ -241,6 +257,39 @@ FOR A PARTICULAR PURPOSE. See the GNU General Public License for details.
 Contributions, issues, and forks are welcome under the terms of the GPL-3.0 license above.
 
 ## Changelog
+
+### 1.2.0
+
+**Export fixes** — JPEG/TIFF export now works on desktop and Android (previously a
+WebGPU storage-buffer limit produced black files, and the share sheet had no
+"save to disk"). Desktop/Android download; iPhone uses the share sheet.
+
+**Full-resolution export** — opt-in toggle in Settings (off by default), powered by a
+new full-size pure-JS One35 decoder so a full-res file matches the preview exactly.
+iPhone exports at an optimized size to stay within iOS memory.
+
+**Share looks** — export your current look to a small file (custom LUT bundled in) and
+import looks others share, from Settings → Share Looks.
+
+**Imported LUTs colour-managed** — ordinary sRGB / Rec.709 photo LUTs are bridged into
+the pipeline automatically, so they look right with no extra steps.
+
+**Copy a look across photos** — Copy arms the current look (its source is outlined);
+Apply / Apply all / multi-select Apply spread it across the roll. Plus batch
+exclude/include and remove from the filmstrip.
+
+**Halation rebuilt** to match desktop 1.6.5 — a three-scale glow that reddens outward,
+with a warmth control.
+
+**Auto date stamp** from each photo's file date (One35 DNGs record no capture date),
+with a manual override.
+
+**Updates** — an "update available" banner when a new version is ready, a "What's new"
+patch-notes sheet (main menu + Settings), and the app version in Settings.
+
+**UX** — pinch-to-zoom stays within the photo (no accidental fullscreen), straighten
+extended to ±45°, default-crop setting applied on open, filmstrip padding, and a clearer
+"WebGPU unavailable" message (enable hardware acceleration in desktop Chrome/Edge).
 
 ### 1.1.0
 

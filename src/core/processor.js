@@ -20,7 +20,7 @@
 import {
   isAvailable, loadShaderModule, createComputePipeline,
   createF32Buffer, createEmptyBuffer, createUniformBuffer, createU32Uniform,
-  runCompute, readbackF32, dispatchSize,
+  runCompute, readbackF32, dispatchSize, maxStorageBindingSize,
 } from './gpu.js';
 
 import {
@@ -371,7 +371,13 @@ export class FlashbackProcessor {
    * @returns {Promise<ImageData|null>}
    */
   async renderPreview(opts = {}) {
-    return this._locked(() => this._render(opts.downscale ? this._small : this._full, { original: Boolean(opts.original) }));
+    const src = opts.downscale ? this._small : this._full;
+    // The downscaled scrub intermediate is ÷3 the full size, so spatial effects
+    // (halation/bloom/grain/CA blur radii are in PIXELS) must be scaled by the
+    // same ratio or they render ~3× too large during a drag and then snap to the
+    // correct size on the full idle pass — most visible on halation's wide radii.
+    const scale = (opts.downscale && this.width && src) ? (src.w / this.width) : 1;
+    return this._locked(() => this._render(src, { original: Boolean(opts.original), scale }));
   }
 
   /**
@@ -405,6 +411,20 @@ export class FlashbackProcessor {
         const dec = await this._decoder.decode(this._origBuffer, { full: true });
         let px = dec.pixels, w = dec.width, h = dec.height;
 
+        // Guard: if a full-res float buffer would exceed what this GPU can BIND,
+        // the pipeline's storage bindings are invalid and the render comes back
+        // BLACK (a non-throwing validation error — it won't hit the catch below).
+        // Bail to the resident-size render instead of producing a black export.
+        const fullResBytes = w * h * 3 * 4;
+        const bindLimit = maxStorageBindingSize();
+        if (bindLimit && fullResBytes > bindLimit) {
+          console.warn(
+            `[processor] full-res buffer ${(fullResBytes / 1048576) | 0} MiB exceeds GPU bind limit ` +
+            `${(bindLimit / 1048576) | 0} MiB — exporting at resident size.`,
+          );
+          return this._render(this._full, { raw: Boolean(opts.raw) });
+        }
+
         // 2. Replay the user's 90° rotations onto the fresh full-res pixels.
         const turns = ((this._rotation % 4) + 4) % 4;
         for (let i = 0; i < turns; i++) {
@@ -413,7 +433,7 @@ export class FlashbackProcessor {
         }
 
         // 3. Colour pipeline → ACEScct (temporary — does NOT touch interactive state).
-        let acescct = await this._encodeAcescct(px, w, h, dec.ccm);
+        let acescct = await this._encodeAcescct(px, w, h, this._ccmFor(dec.ccm));
         px = null; // allow the full-res linear buffer to be reclaimed
 
         // 4. Upload + run the render passes at full resolution. `scale` keeps the
@@ -471,6 +491,11 @@ export class FlashbackProcessor {
     // the Natural vibe, just with everything zeroed.
     const original = Boolean(opts.original);
     const lutEnabled = !original && (this.config?.enable_lut ?? true) && this.gpuLut;
+    // Imported "Photo LUTs" are authored for a display-referred sRGB/Rec.709
+    // image, not our ACEScct intermediate. They get the Natural display render
+    // as input (see the display branch below) and NONE of the film-LUT exposure
+    // shaping (base lift / reverse-AE / push) — the LUT grades a finished image.
+    const srgbLut = lutEnabled && this.gpuLut.inputSpace === 'srgb';
 
     // 2. White balance + exposure in linear ACEScg.
     //
@@ -484,7 +509,7 @@ export class FlashbackProcessor {
     const { exposure_ev, wb_temp, tint, push_pull_ev = 0 } = original
       ? { exposure_ev: 0, wb_temp: 0, tint: 0, push_pull_ev: 0 }
       : this.userSettings;
-    const filmLook = lutEnabled;
+    const filmLook = lutEnabled && !srgbLut;
     // Per-vibe base exposure lift (upstream base_exposure_offset_v2). Most looks
     // use +2 EV; the Flashback V1 look uses 0 (its LUT is trained for that).
     const baseLift = filmLook ? (this.config?.base_lift_ev ?? RENDER_LIFT_EV) : 0;
@@ -537,10 +562,21 @@ export class FlashbackProcessor {
     // looks washed-out and flat.
     let finalBuf;
     if (lutEnabled) {
-      runCompute(this._pipelines.encode, [
-        { binding: 0, resource: { buffer: lit } },
-        { binding: 1, resource: { buffer: a } },
-      ], elDispatch);
+      // LUT input space: native LUTs read ACEScct-encoded ACEScg; imported sRGB
+      // "Photo LUTs" read the Natural display render (linear ACEScg → ProPhoto →
+      // tone curve → sRGB) so a standard creative LUT grades a finished image and
+      // behaves as the user expects. Both then feed the display-referred chain.
+      if (srgbLut) {
+        runCompute(this._pipelines.tonecurveProphoto, [
+          { binding: 0, resource: { buffer: lit } },
+          { binding: 1, resource: { buffer: a } },
+        ], pxDispatch);
+      } else {
+        runCompute(this._pipelines.encode, [
+          { binding: 0, resource: { buffer: lit } },
+          { binding: 1, resource: { buffer: a } },
+        ], elDispatch);
+      }
       const lutUniform = createU32Uniform([w, h, this.gpuLut.size, 0]);
       runCompute(this._pipelines.lut, [
         { binding: 0, resource: { buffer: a } },

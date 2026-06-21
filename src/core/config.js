@@ -232,8 +232,21 @@ export const CHROMATIC_ABERRATION_STEPS    = 4;
 export const CHROMATIC_ABERRATION_BLUE_BLUR = 0.3;
 
 export const HALATION_THRESHOLD       = 0.55;
-export const HALATION_BLUR_RADIUS     = 4;
+export const HALATION_BLUR_RADIUS     = 8;     // base radius (desktop 1.6.5); scales multiply it
 export const HALATION_STRENGTH        = 0.5;
+export const HALATION_WARMTH_PCT      = 120;   // green/blue falloff exponent: 100 = physical, >100 = redder
+
+// Three-scale halation model (desktop 1.6.5). A defined core plus two fainter,
+// wider scatter tiers, each tinted so the halo reddens outward (back-reflected
+// light is red-dominant after passing twice through the dye layers + base mask).
+// Per scale: [radius_mult, threshold_offset, weight, green_frac, blue_frac].
+// (We use a Gaussian blur for every scale; the desktop uses a defined disc for
+// the core — a future refinement for a crisper CineStill edge.)
+export const HALATION_SCALES = [
+  [1.0, 0.00, 1.00, 0.45, 0.12],   // core — dominant
+  [2.5, 0.10, 0.18, 0.28, 0.05],   // near scatter — fainter, brighter sources only
+  [5.0, 0.20, 0.07, 0.16, 0.02],   // far scatter — faint wide pedestal
+];
 
 export const SOFTNESS_SIGMA           = 0.5;
 
@@ -275,7 +288,7 @@ export const BLOOM_STRENGTH           = 0.3;
 // effects.applyPreLut converts these to a linear value (0.18·2^stops). They
 // replace the old display-space halation/bloom thresholds now that halation and
 // bloom run before the LUT (matching the desktop's stops-based knobs).
-export const HALATION_THRESHOLD_STOPS = 4.0;
+export const HALATION_THRESHOLD_STOPS = 4.5;   // desktop 1.6.5 (was 4.0)
 export const BLOOM_THRESHOLD_STOPS    = 3.0;
 
 /**
@@ -501,6 +514,7 @@ export const DEFAULT_CONFIG = {
   halation_threshold:        HALATION_THRESHOLD,
   halation_blur_radius:      HALATION_BLUR_RADIUS,
   halation_strength:         HALATION_STRENGTH,
+  halation_warmth_pct:       HALATION_WARMTH_PCT,
   ca_strength:               CHROMATIC_ABERRATION_STRENGTH,
   ca_steps:                  CHROMATIC_ABERRATION_STEPS,
   ca_blue_blur:              CHROMATIC_ABERRATION_BLUE_BLUR,

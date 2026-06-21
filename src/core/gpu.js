@@ -5,23 +5,92 @@
 
 let _device  = null;
 let _adapter = null;
+let _initError = null;   // human-readable reason init() returned null (for the UI)
 
 /** Cache of compiled shader modules, keyed by URL. */
 const _moduleCache = new Map();
+
+/** Why WebGPU init failed (null if it succeeded / hasn't run). */
+export function getInitError() { return _initError; }
+
+/**
+ * Acquire an adapter, trying progressively less picky options. On hybrid-GPU or
+ * driver-blocklisted machines, `powerPreference:'high-performance'` can return
+ * null (the discrete GPU is unavailable) even though a default/integrated
+ * adapter works — this is a common reason Chrome reports "WebGPU unavailable"
+ * while Firefox/Floorp (different GPU selection) succeeds.
+ * @returns {Promise<GPUAdapter|null>}
+ */
+async function acquireAdapter() {
+  const tries = [
+    { powerPreference: 'high-performance' },
+    undefined,                                  // browser's default adapter
+    { powerPreference: 'low-power' },
+  ];
+  for (const opts of tries) {
+    try {
+      const a = await navigator.gpu.requestAdapter(opts);
+      if (a) return a;
+    } catch (e) {
+      console.warn('[gpu] requestAdapter threw for', opts, e);
+    }
+  }
+  return null;
+}
+
+/**
+ * Request a device with the adapter's max storage-buffer limits, falling back
+ * to a default-limits device if that request is rejected (some Chrome builds
+ * refuse raised limits). Never throws for the limits themselves — only a real
+ * "no device" condition propagates.
+ * @param {GPUAdapter} adapter
+ * @returns {Promise<GPUDevice>}
+ */
+async function requestDeviceWithRaisedLimits(adapter) {
+  const lim = adapter.limits;
+  try {
+    return await adapter.requestDevice({
+      requiredLimits: {
+        maxStorageBufferBindingSize: lim.maxStorageBufferBindingSize,
+        maxBufferSize:               lim.maxBufferSize,
+      },
+    });
+  } catch (e) {
+    console.warn('[gpu] raised-limit device request failed; using default limits:', e);
+    return adapter.requestDevice();
+  }
+}
 
 /**
  * Initialise WebGPU. Returns the GPUDevice, or null if unsupported.
  * @returns {Promise<GPUDevice|null>}
  */
 export async function init() {
+  _initError = null;
   if (!navigator.gpu) {
+    _initError = 'This browser has no WebGPU (navigator.gpu missing). Try Chrome/Edge 113+, or enable hardware acceleration.';
     console.warn('[gpu] WebGPU not available in this browser.');
     return null;
   }
   try {
-    _adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
-    if (!_adapter) { console.warn('[gpu] No WebGPU adapter found.'); return null; }
-    _device = await _adapter.requestDevice();
+    _adapter = await acquireAdapter();
+    if (!_adapter) {
+      _initError = 'No WebGPU adapter — the GPU may be blocklisted or hardware acceleration is off in the browser settings.';
+      console.warn('[gpu] No WebGPU adapter found.');
+      return null;
+    }
+    // Raise the storage-buffer limits to the adapter's max. The DEFAULT
+    // maxStorageBufferBindingSize is only 128 MiB, but a non-Flashback full-res
+    // export can exceed that → an oversize binding is a (non-throwing) validation
+    // error that silently writes nothing (black). Requesting the hardware maximum
+    // (typically ≥ 2 GiB) lets large buffers bind cleanly.
+    //
+    // CRITICAL: some Chrome configs REJECT requestDevice with raised limits, which
+    // would otherwise take the whole app down with "WebGPU unavailable" (Firefox/
+    // Floorp are more lenient). So fall back to a default-limits device on failure
+    // — the app stays fully usable, and the export paths already guard against
+    // buffers that exceed whatever limit we end up with (resident-size fallback).
+    _device = await requestDeviceWithRaisedLimits(_adapter);
     _device.lost.then((info) => {
       console.error('[gpu] Device lost:', info.reason, info.message);
       _device = null;
@@ -37,6 +106,7 @@ export async function init() {
     console.log('[gpu] WebGPU ready:', _adapter.info?.device ?? '(unknown device)');
     return _device;
   } catch (e) {
+    _initError = `WebGPU init failed: ${e?.message ?? e}`;
     console.error('[gpu] Init failed:', e);
     return null;
   }
@@ -47,6 +117,16 @@ export function getDevice() { return _device; }
 
 /** True if WebGPU is available AND the device is ready. */
 export function isAvailable() { return _device !== null; }
+
+/**
+ * The largest single storage buffer (in bytes) this device can BIND in a
+ * shader. Full-res export must keep each float buffer under this or the bind
+ * group is invalid and the dispatch silently produces black. Returns 0 if the
+ * device isn't ready yet.
+ */
+export function maxStorageBindingSize() {
+  return _device?.limits?.maxStorageBufferBindingSize ?? 0;
+}
 
 /** Maximum workgroups dispatchable along a single dimension (WebGPU guarantee). */
 export const MAX_WORKGROUPS_PER_DIM = 65535;

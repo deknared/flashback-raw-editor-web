@@ -68,6 +68,103 @@ export function decodeOne35HalfSize(buffer) {
 }
 
 /**
+ * Decode a One35 DNG to FULL-resolution float32 RGB in [0, 1].
+ *
+ * Same calibration as decodeOne35HalfSize (black-subtract → scale → the exact
+ * same downstream recoverHighlights + FM1_WB_TO_ACESCG pipeline), but instead of
+ * 2×2 binning it demosaics the full 4144×3088 RGGB mosaic. This is what makes a
+ * true full-resolution export possible WITHOUT libraw-wasm (whose different
+ * calibration rendered exports brighter and colour-shifted than the preview).
+ *
+ * Demosaic: hue-preserving bilinear. Green is interpolated first; red and blue
+ * are reconstructed as G + bilinear(colour − G) sampled at that colour's Bayer
+ * sites. Interpolating the colour-difference (rather than the raw channels)
+ * keeps edges neutral and avoids the zipper/colour-fringe of naïve per-channel
+ * bilinear. Downscaled 2× it matches the half-size decode (same calibration),
+ * which is how full-res stays consistent with the preview.
+ *
+ * @param {ArrayBuffer} buffer
+ * @returns {{ pixels: Float32Array, width: number, height: number }}
+ */
+export function decodeOne35Full(buffer) {
+  const stripOffset = _readStripOffset(buffer);
+  const raw = new Uint8Array(buffer, stripOffset);
+  const W = SENSOR_W, H = SENSOR_H;
+
+  // 1. Unpack the full 10-bit Bayer mosaic → normalized float plane [0,1].
+  const bayer = new Float32Array(W * H);
+  {
+    const row = new Uint16Array(W);
+    for (let y = 0; y < H; y++) {
+      _readRow10MSB(raw, y * BYTES_PER_ROW, row);
+      const o = y * W;
+      for (let x = 0; x < W; x++) {
+        const v = (row[x] - SENSOR_BLACK) * SCALE;
+        bayer[o + x] = v < 0 ? 0 : v > 1 ? 1 : v;
+      }
+    }
+  }
+
+  // 2. Full green plane. RGGB: green sits where x,y parities differ; at red/blue
+  //    sites G is the average of its four orthogonal (all-green) neighbours.
+  const G = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) {
+    const o   = y * W;
+    const oUp = (y > 0     ? y - 1 : 1)     * W;   // mirror at the borders
+    const oDn = (y < H - 1 ? y + 1 : H - 2) * W;
+    for (let x = 0; x < W; x++) {
+      if (((x ^ y) & 1) === 1) { G[o + x] = bayer[o + x]; continue; }  // green site
+      const xL = x > 0     ? x - 1 : 1;
+      const xR = x < W - 1 ? x + 1 : W - 2;
+      G[o + x] = 0.25 * (bayer[o + xL] + bayer[o + xR] + bayer[oUp + x] + bayer[oDn + x]);
+    }
+  }
+
+  // 3. Assemble interleaved RGB. The known channel comes straight from the
+  //    mosaic; the two missing channels = G + bilinear(colour − G).
+  const pixels = new Float32Array(W * H * 3);
+  for (let y = 0; y < H; y++) {
+    const o   = y * W;
+    const oUp = (y > 0     ? y - 1 : 1)     * W;
+    const oDn = (y < H - 1 ? y + 1 : H - 2) * W;
+    const rowEven = (y & 1) === 0;
+    for (let x = 0; x < W; x++) {
+      const i  = o + x;
+      const di = i * 3;
+      const xL = x > 0     ? x - 1 : 1;
+      const xR = x < W - 1 ? x + 1 : W - 2;
+      const g  = G[i];
+      const colEven = (x & 1) === 0;
+      let r, b;
+
+      if (rowEven && colEven) {                 // R site → B from 4 diagonals
+        r = bayer[i];
+        b = g + 0.25 * (
+          (bayer[oUp + xL] - G[oUp + xL]) + (bayer[oUp + xR] - G[oUp + xR]) +
+          (bayer[oDn + xL] - G[oDn + xL]) + (bayer[oDn + xR] - G[oDn + xR]));
+      } else if (rowEven) {                      // green on red row → R horiz, B vert
+        r = g + 0.5 * ((bayer[o + xL] - G[o + xL]) + (bayer[o + xR] - G[o + xR]));
+        b = g + 0.5 * ((bayer[oUp + x] - G[oUp + x]) + (bayer[oDn + x] - G[oDn + x]));
+      } else if (colEven) {                      // green on blue row → R vert, B horiz
+        r = g + 0.5 * ((bayer[oUp + x] - G[oUp + x]) + (bayer[oDn + x] - G[oDn + x]));
+        b = g + 0.5 * ((bayer[o + xL] - G[o + xL]) + (bayer[o + xR] - G[o + xR]));
+      } else {                                   // B site → R from 4 diagonals
+        b = bayer[i];
+        r = g + 0.25 * (
+          (bayer[oUp + xL] - G[oUp + xL]) + (bayer[oUp + xR] - G[oUp + xR]) +
+          (bayer[oDn + xL] - G[oDn + xL]) + (bayer[oDn + xR] - G[oDn + xR]));
+      }
+
+      pixels[di]     = r < 0 ? 0 : r > 1 ? 1 : r;
+      pixels[di + 1] = g < 0 ? 0 : g > 1 ? 1 : g;
+      pixels[di + 2] = b < 0 ? 0 : b > 1 ? 1 : b;
+    }
+  }
+
+  return { pixels, width: W, height: H };
+}
+
+/**
  * Read W 10-bit pixels from one raw row into a Uint16Array.
  * MSB-first packing: 4 pixels per 5 bytes.
  *   pix[0] = (byte[0] << 2) | (byte[1] >> 6)
