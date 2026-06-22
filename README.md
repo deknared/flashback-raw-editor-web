@@ -258,6 +258,13 @@ Contributions, issues, and forks are welcome under the terms of the GPL-3.0 lice
 
 ## Changelog
 
+### 1.2.1
+
+**Halation parity fix** — the halation highlight threshold is now measured against
+the scene exposure (matching the desktop app), instead of the internally-lifted
+signal. Previously the +2 EV base lift made the 4.5-EV threshold behave like ~2.5 EV,
+so halation bloomed from too many highlights; it's now correct and exposure-invariant.
+
 ### 1.2.0
 
 **Export fixes** — JPEG/TIFF export now works on desktop and Android (previously a

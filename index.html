@@ -425,12 +425,16 @@
       </header>
       <div class="sheet-body">
         <section>
+          <h3>1.2.1</h3>
+          <ul>
+            <li><b>Halation parity fix</b> — the highlight glow threshold now matches the desktop app, so halation no longer blooms from too many highlights.</li>
+          </ul>
+          <h3 style="margin-top:16px">Recently, in 1.2.0</h3>
           <ul>
             <li><b>Share looks</b> — export your current look to a file and import ones others share (Settings → Share Looks). Custom LUTs travel with the file.</li>
             <li><b>Imported LUTs just work</b> — drop in any sRGB/Rec.709 photo LUT; it's colour-managed into the pipeline automatically.</li>
             <li><b>Copy &amp; apply a look</b> across photos — copy from one frame, then apply to one, several (multi-select), or all.</li>
             <li><b>Full-resolution export</b> on desktop &amp; Android, with a toggle in Settings.</li>
-            <li><b>Halation</b> rebuilt to match the desktop app — a three-scale glow that reddens outward.</li>
             <li><b>Auto date stamp</b> from each photo's file date, plus a manual override.</li>
             <li><b>Pinch-to-zoom</b> stays in the photo (no more accidental fullscreen), and an <b>update banner</b> tells you when a new version is ready.</li>
           </ul>
@@ -575,10 +579,10 @@
             Settings.</li>
             <li><b>JPEG</b> — 8-bit, great for sharing. Quality is adjustable in Settings.</li>
             <li><b>TIFF</b> — 16-bit, lossless, best for further editing in Lightroom etc.</li>
-            <li><b>Full-resolution export</b> (Settings) is on by default on desktop &amp;
-            Android; iPhone exports at an optimized size to stay within memory. On iPhone,
-            saving opens the share sheet — pick <b>Save Image</b> or <b>Save to Files</b>;
-            on desktop/Android it downloads.</li>
+            <li><b>Full-resolution export</b> (Settings, off by default) renders at the
+            sensor's native size on desktop &amp; Android; iPhone always exports at an
+            optimized size to stay within memory. On iPhone, saving opens the share sheet —
+            pick <b>Save Image</b> or <b>Save to Files</b>; on desktop/Android it downloads.</li>
             <li>With 2+ photos loaded, a <b>Batch Export</b> button appears. It develops
             every <i>included</i> photo — each with its own profile and adjustments —
             and saves them together in one share sheet. Long-press it to pick the batch
@@ -594,7 +598,7 @@
             <li><b>Export</b> — format (JPEG / TIFF) and quality for single and batch export separately.</li>
             <li><b>Stamp Color</b> — colour of the date/frame number stamp.</li>
             <li><b>Reduce motion</b> — disables animations. Also respects the system accessibility setting.</li>
-            <li><b>Full-resolution export</b> — render at the sensor's full native resolution (on by default). Turn off for faster, smaller exports if a device runs low on memory.</li>
+            <li><b>Full-resolution export</b> — render at the sensor's full native resolution (off by default). Turn on for full-size files on desktop &amp; Android; iPhone always exports at an optimized size.</li>
           </ul>
         </section>
 

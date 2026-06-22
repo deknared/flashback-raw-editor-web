@@ -553,6 +553,9 @@ export class FlashbackProcessor {
         b, w, h, count, this.config,
         (key, cnt) => this._poolBuf(key, cnt),
         opts.scale ?? 1,
+        // Total EV already applied to this buffer (base lift + user exposure +
+        // reverse-AE) so halation's threshold can stay scene-referred like desktop.
+        exposure_ev + baseLift + preLutEv,
       );
     }
 

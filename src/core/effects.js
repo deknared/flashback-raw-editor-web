@@ -308,7 +308,7 @@ export class Effects {
    * @param {number} [scale]    resolution ratio vs the preview (blur radii scale)
    * @returns {GPUBuffer}       buffer holding the result (may be src)
    */
-  applyPreLut(src, w, h, count, config, getBuf, scale = 1) {
+  applyPreLut(src, w, h, count, config, getBuf, scale = 1, appliedEv = 0) {
     if (!this._ready) return src;
     const c = config ?? {};
     const s = scale > 0 ? scale : 1;
@@ -330,7 +330,13 @@ export class Effects {
     if (c.enable_halation && (c.halation_strength ?? 0) > 0) {
       const strength  = c.halation_strength;
       const warmthExp = Math.max(0, c.halation_warmth_pct ?? HALATION_WARMTH_PCT) / 100;
-      const baseThr   = acescctThr(c.halation_threshold_stops ?? 4.5);
+      // The signal reaching here is already lifted by `appliedEv` (base +2 EV
+      // lift + user exposure + reverse-AE). The desktop bakes halation BEFORE
+      // exposure, so its threshold is scene-referred. Add appliedEv back so our
+      // threshold lands at the same true "stops above mid-grey" — otherwise the
+      // +2 EV lift makes 4.5 EV behave like ~2.5 EV (too much glow). This also
+      // makes halation invariant to the exposure slider, matching the desktop.
+      const baseThr   = acescctThr((c.halation_threshold_stops ?? 4.5) + appliedEv);
       const baseR     = Math.max(1, c.halation_blur_radius ?? 8) * s;
       const K         = 20.0;
       const mask = getBuf('mask', count);
