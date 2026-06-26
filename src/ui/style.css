@@ -182,6 +182,9 @@ button { touch-action: manipulation; }
   order: 3;
   flex: 0 0 auto;
   display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
   padding: 6px calc(var(--controls-pad, 12px) + var(--sar)) 6px calc(var(--controls-pad, 12px) + var(--sal));
   background: var(--bg);
   border-bottom: 1px solid var(--border);
@@ -191,6 +194,11 @@ button { touch-action: manipulation; }
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+}
+#look-tools-right {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
 }
 .look-tool-btn {
   padding: 3px 10px;
@@ -420,6 +428,32 @@ body.staging .version-tag { color: #34c759; font-weight: 600; }
   line-height: 1.35;
 }
 
+/* Photo-info (metadata) sheet rows. */
+.meta-list { display: grid; grid-template-columns: auto 1fr; gap: 9px 16px; margin: 0; }
+.meta-list dt { color: var(--text-dim); font-size: 13px; }
+.meta-list dd {
+  margin: 0; color: var(--text); font-size: 13px;
+  font-family: var(--font-mono); text-align: right; overflow-wrap: anywhere;
+}
+
+/* Filename is tappable → opens the photo-info sheet. */
+.filename { cursor: pointer; }
+
+/* "EXP" badge — marks a non-One35 (experimental) file next to the filename. */
+.exp-badge {
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  font-family: var(--font-mono);
+  color: var(--bg);
+  background: var(--accent);
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  opacity: 0.85;
+}
+.exp-badge[hidden] { display: none; }
+
 /* ╔══════════════════════════════════════════════════════════╗
    ║  ICON BUTTONS                                            ║
    ╚══════════════════════════════════════════════════════════╝ */
@@ -454,6 +488,66 @@ body.staging .version-tag { color: #34c759; font-weight: 600; }
   z-index: 40;
   pointer-events: none;       /* never blocks canvas taps (zen toggle) */
   image-rendering: auto;
+}
+
+/* Clipping-warning toggle — sits just under the histogram overlay and matches
+   its width so the two read as one control. */
+#clip-btn {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 56px + 66px + 6px);
+  right: 12px;
+  z-index: 40;
+  width: 132px;
+  text-align: center;
+  font-size: 11px;
+  font-family: inherit;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+  background: rgba(13, 13, 13, 0.55);
+  border: 1px solid var(--accent-dim);
+  border-radius: 8px;
+  padding: 5px 0;
+  cursor: pointer;
+}
+#clip-btn.active { color: var(--accent); }
+#clip-btn.hidden { display: none; }
+
+/* WebGPU-unavailable explainer (full screen, blocking) */
+#gpu-help {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg);
+  overflow-y: auto;
+}
+.gpu-help-card {
+  max-width: 420px;
+  color: var(--text);
+}
+.gpu-help-card h2 { font-size: 20px; margin: 0 0 10px; }
+.gpu-help-card p { color: var(--text-dim); font-size: 14px; line-height: 1.5; margin: 0 0 12px; }
+.gpu-help-card ul { margin: 0 0 16px; padding-left: 20px; }
+.gpu-help-card li { color: var(--text-dim); font-size: 14px; line-height: 1.6; margin-bottom: 8px; }
+.gpu-help-card b { color: var(--text); }
+.gpu-help-reason {
+  font-family: var(--font-mono);
+  font-size: 11px !important;
+  opacity: 0.65;
+  word-break: break-word;
+}
+#gpu-help-reload {
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 15px;
+  font-weight: 600;
+  padding: 11px 22px;
+  cursor: pointer;
 }
 
 /* Reset-to-defaults button (in the effects panel). */
@@ -623,11 +717,14 @@ body.staging .version-tag { color: #34c759; font-weight: 600; }
 #fx-slider-area {
   display: none;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px 14px;
+  gap: 16px;
+  padding: 10px 12px 16px;
   border-bottom: 1px solid var(--border);
 }
 #fx-slider-area.open { display: flex; }
+/* Give multi-slider effects (e.g. Halation → Strength + Warmth) a comfortable
+   touch target and clear separation between rows. */
+#fx-slider-area .slider-mini.fx-sa-active { min-height: 22px; }
 
 /* Small toggle switch used in the fx-sa-head beside the effect name */
 .fx-sa-toggle {
@@ -948,6 +1045,16 @@ body.staging .version-tag { color: #34c759; font-weight: 600; }
   -webkit-user-select: none;
   min-width: 0;
 }
+/* Per-slider caption, shown when an effect exposes more than one slider
+   (e.g. Halation → Strength + Warmth). Fixed width so captions align. */
+.slider-mini-label {
+  flex: 0 0 auto;
+  width: 54px;
+  font-size: 11px;
+  color: var(--text-dim);
+  user-select: none;
+  -webkit-user-select: none;
+}
 .slider-mini .slider-track {
   flex: 1;
   height: 2px;
@@ -1052,9 +1159,20 @@ body.staging .version-tag { color: #34c759; font-weight: 600; }
    ║  Bars leave the flow entirely so the photo region grows  ║
    ║  to the full screen (JS re-renders on toggle).           ║
    ╚══════════════════════════════════════════════════════════╝ */
-body.zen #top-bar   { display: none; }
-body.zen #file-info { display: none; }
-body.zen #controls  { display: none; }
+/* Full screen keeps ONLY the photo + the filmstrip (swipe through photos while
+   full screen). Everything else leaves the flow; the controls block stays but
+   sheds its chrome so just the strip remains. */
+body.zen #top-bar        { display: none; }
+body.zen #file-info      { display: none; }
+body.zen #look-tools-row { display: none; }
+body.zen #controls-stack { display: none; }
+body.zen #controls {
+  background: transparent;
+  border-top: none;
+  padding-top: 0;
+}
+/* With a single photo the strip is hidden anyway, so the controls block
+   collapses to nothing and the photo truly fills the screen. */
 
 /* ╔══════════════════════════════════════════════════════════╗
    ║  TOAST NOTIFICATIONS                                     ║

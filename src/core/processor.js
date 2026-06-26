@@ -62,6 +62,10 @@ export class FlashbackProcessor {
     this._origBuffer = null;
     /** Whether the loaded image used the Flashback decode profile. */
     this._isFlashback = false;
+    /** Whether the loaded image is a finished photo (JPEG/PNG) — effects-only. */
+    this._isPhoto = false;
+    /** Camera (per-file) white balance for One35 decodes; set from settings. */
+    this.cameraWb = false;
     /** Reverse-AE gain (t_ref / exposure) for the loaded photo; 1 = none. */
     this._revGain = 1;
     /** EXIF capture date string of the loaded photo (for the date stamp). */
@@ -267,6 +271,9 @@ export class FlashbackProcessor {
     this._origBuffer  = origBuffer;   // retained for full-resolution re-decode at export
     this._rotation    = 0;
     this._isFlashback = Boolean(decoded.isFlashback);
+    // Finished images (JPEG/PNG): already developed + display-referred, so the
+    // render skips the film LUT and base-exposure shaping (effects-only path).
+    this._isPhoto = Boolean(decoded.isPhoto);
     // Reverse-AE: the One35's AE decision is its shutter time; t_ref/t is the
     // gain that undoes it. Flashback files only (matching upstream).
     this._revGain = (this._isFlashback && decoded.exposureS > 0)
@@ -402,13 +409,17 @@ export class FlashbackProcessor {
   async renderExportFull(opts = {}) {
     this._lastExportFullRes = false;
     if (!this._ready || !this._origBuffer) return this.renderExport(opts);
+    // Finished images: the resident intermediate already IS the full decode
+    // (the image decoder doesn't half-size), and LibRaw can't re-decode a JPEG.
+    // Render the resident buffer directly.
+    if (this._isPhoto) { this._lastExportFullRes = true; return this.renderExport(opts); }
 
     return this._locked(async () => {
       let buf = null;
       let count = 0;
       try {
         // 1. Decode the original at full resolution.
-        const dec = await this._decoder.decode(this._origBuffer, { full: true });
+        const dec = await this._decoder.decode(this._origBuffer, { full: true, cameraWb: this.cameraWb });
         let px = dec.pixels, w = dec.width, h = dec.height;
 
         // Guard: if a full-res float buffer would exceed what this GPU can BIND,
@@ -457,6 +468,160 @@ export class FlashbackProcessor {
     });
   }
 
+  /**
+   * Tiled full-resolution export — bounds peak GPU memory by processing the
+   * frame in horizontal strips instead of one ~1.4 GB allocation (which crashes
+   * iOS Safari's per-tab budget). Each strip is rendered with a vertical apron
+   * so blur-based effects (halation, softness, sharpen, CA, CNR) have the context
+   * they need, then the apron is cropped and the core rows are stitched into a
+   * full CPU output. Bloom — whose blur spans the whole frame — is computed once
+   * as a global low-res buffer and added per strip. Falls back to the resident
+   * render on any failure, so an export can never crash.
+   * @param {{ raw?: boolean }} [opts]
+   * @returns {Promise<ImageData | {rgb:Float32Array,width:number,height:number} | null>}
+   */
+  async renderExportTiled(opts = {}) {
+    this._lastExportFullRes = false;
+    if (!this._ready || !this._origBuffer || this._isPhoto) return this.renderExportFull(opts);
+
+    return this._locked(async () => {
+      const raw = Boolean(opts.raw);
+      let glowBuf = null;
+      let halGlowBuf = null;
+      let prevCount = null;
+      try {
+        // 1. Decode the original at full resolution + replay rotations (CPU).
+        const dec = await this._decoder.decode(this._origBuffer, { full: true, cameraWb: this.cameraWb });
+        let px = dec.pixels, w = dec.width, h = dec.height;
+        const turns = ((this._rotation % 4) + 4) % 4;
+        for (let i = 0; i < turns; i++) { px = rotate90RGB(px, w, h, true); const t = w; w = h; h = t; }
+        const ccm = this._ccmFor(dec.ccm);
+        const scale = this.width ? (w / this.width) : 1;
+        const cfg = this.config ?? {};
+
+        // 2. Render params for the global bloom source (must match _render's
+        //    adjust so the tiled bloom lands where the untiled bloom would).
+        const lutEnabled = (cfg.enable_lut ?? true) && this.gpuLut &&
+          !(this._isPhoto && this.gpuLut?.inputSpace !== 'srgb');
+        const filmLook = lutEnabled && this.gpuLut?.inputSpace !== 'srgb';
+        const us = this.userSettings;
+        const baseLift = filmLook ? (cfg.base_lift_ev ?? RENDER_LIFT_EV) : 0;
+        const revEv = (filmLook && (cfg.enable_reverse_autoexposure ?? false) &&
+          this._revGain > 0 && this._revGain !== 1)
+          ? REVERSE_AE_STRENGTH * Math.log2(this._revGain) : 0;
+        const tempFactor = (us.wb_temp ?? 0) / 1000;
+
+        // 3. Global low-res pre-passes for the two whole-frame-reach effects:
+        //    halation (~240px blur) and bloom (~frame/20 blur). Both are computed
+        //    ONCE on a 1/4-res adjusted-linear frame and added per strip, so
+        //    neither needs a per-strip apron — that's what keeps the export fast
+        //    (the apron below covers only the small-radius effects). Heavily
+        //    blurred, so low-res is visually identical (verified vs single-pass).
+        const bloomOn = cfg.enable_bloom && (cfg.bloom_strength ?? 0) > 0;
+        const halOn   = cfg.enable_halation && (cfg.halation_strength ?? 0) > 0;
+        let bloomGlowSmall = null, halationGlowSmall = null;
+        if (bloomOn || halOn) {
+          const sw = Math.max(1, Math.ceil(w / 4));
+          const sh = Math.max(1, Math.ceil(h / 4));
+          const sCount = sw * sh * 3;
+          const smallLinear = downsampleRGB(px, w, h, sw, sh);
+          const smallAcescct = await this._encodeAcescct(smallLinear, sw, sh, ccm);
+          const sAce = createF32Buffer(smallAcescct, STORAGE_RW);
+          const sA = createEmptyBuffer(sCount * 4, STORAGE_RW);
+          const sB = createEmptyBuffer(sCount * 4, STORAGE_RW);
+          const elS = dispatchSize(sCount, 256);
+          runCompute(this._pipelines.decode, [
+            { binding: 0, resource: { buffer: sAce } },
+            { binding: 1, resource: { buffer: sA } },
+          ], elS);
+          const adjU = createUniformBuffer(new Float32Array([
+            1.0 + tempFactor * 0.15, 1.0 - (us.tint ?? 0) * 0.015, 1.0 - tempFactor * 0.15,
+            Math.pow(2, (us.exposure_ev ?? 0) + baseLift + revEv),
+          ]));
+          runCompute(this._pipelines.adjust, [
+            { binding: 0, resource: { buffer: sA } },
+            { binding: 1, resource: { buffer: sB } },
+            { binding: 2, resource: { buffer: adjU } },
+          ], elS);
+          adjU.destroy();
+
+          if (halOn) {
+            // Same total EV the per-strip render applies, so the scene-referred
+            // threshold matches; ÷4 because the glow is built at 1/4 res.
+            const appliedEv = (us.exposure_ev ?? 0) + baseLift + revEv;
+            halGlowBuf = this._effects.buildHalationGlowSmall(sB, sw, sh, cfg, appliedEv, scale / 4);
+            if (halGlowBuf) halationGlowSmall = { buf: halGlowBuf, w: sw, h: sh };
+          }
+          if (bloomOn) {
+            glowBuf = createEmptyBuffer(sCount * 4, STORAGE_RW);
+            const glowTmp = createEmptyBuffer(sCount * 4, STORAGE_RW);
+            this._effects.buildBloomGlowSmall(sB, sw, sh, cfg, glowBuf, glowTmp);
+            glowTmp.destroy();
+            bloomGlowSmall = { buf: glowBuf, w: sw, h: sh };
+          }
+          sAce.destroy(); sA.destroy(); sB.destroy();
+        }
+
+        // 4. Apron = the largest vertical reach of the remaining per-strip blur
+        //    effects (halation + bloom are global now, so they're excluded).
+        const softR = Math.ceil((cfg.softness_sigma ?? 0) * scale * 3);
+        const shpR  = Math.ceil(Math.max(0.3, cfg.sharpen_radius ?? 1) * scale * 3);
+        const caR   = Math.ceil((h * 0.5) * (cfg.ca_strength ?? 0)) + 2;
+        const APRON = Math.max(softR, shpR, caR, 4) + 8;
+
+        // 5. Strip height from a peak-memory budget (~10 strip-size buffers live).
+        const TARGET = 384 * 1024 * 1024, BUFS = 10;
+        const maxRows = Math.floor(TARGET / (BUFS * w * 12));
+        const STRIP_H = Math.max(32, maxRows - 2 * APRON);
+
+        // 6. CPU output (interleaved). raw → float RGB; else RGBA8.
+        const out = raw ? new Float32Array(w * h * 3) : new Uint8ClampedArray(w * h * 4);
+
+        for (let y0 = 0; y0 < h; y0 += STRIP_H) {
+          const y1 = Math.min(h, y0 + STRIP_H);
+          const a0 = Math.max(0, y0 - APRON);
+          const a1 = Math.min(h, y1 + APRON);
+          const rows = a1 - a0;
+          const count = rows * w * 3;
+          if (prevCount !== null && prevCount !== count) {
+            this._freeBuffersForCount(prevCount);   // keep only one strip-count's buffers alive
+          }
+
+          // Strip linear rows are contiguous in the interleaved buffer.
+          const stripLinear = px.subarray(a0 * w * 3, a1 * w * 3);
+          const stripAcescct = await this._encodeAcescct(stripLinear, w, rows, ccm);
+          const srcBuf = createF32Buffer(stripAcescct, STORAGE_RW);
+          const region = { yOffset: a0, fullH: h };
+          const result = await this._render(
+            { buf: srcBuf, w, h: rows, count },
+            { raw, scale, region, bloomGlowSmall, halationGlowSmall },
+          );
+          srcBuf.destroy();
+
+          // Crop the apron; copy the core rows [y0,y1) into the full output.
+          const coreStart = y0 - a0;
+          if (raw) {
+            out.set(result.rgb.subarray(coreStart * w * 3, (coreStart + (y1 - y0)) * w * 3), y0 * w * 3);
+          } else {
+            out.set(result.data.subarray(coreStart * w * 4, (coreStart + (y1 - y0)) * w * 4), y0 * w * 4);
+          }
+          prevCount = count;
+        }
+        if (prevCount !== null) this._freeBuffersForCount(prevCount);
+
+        this._lastExportFullRes = true;
+        return raw ? { rgb: out, width: w, height: h } : new ImageData(out, w, h);
+      } catch (err) {
+        console.warn('[processor] tiled export failed — using preview size:', err);
+        return this._render(this._full, { raw: Boolean(opts.raw) });
+      } finally {
+        glowBuf?.destroy();
+        halGlowBuf?.destroy();
+        if (prevCount) this._freeBuffersForCount(prevCount);
+      }
+    });
+  }
+
   /** Destroy + drop cached scratch/pool buffers for a given element count. */
   _freeBuffersForCount(count) {
     const s = this._scratch.get(count);
@@ -491,6 +656,11 @@ export class FlashbackProcessor {
     // the Natural vibe, just with everything zeroed.
     const original = Boolean(opts.original);
     const lutEnabled = !original && (this.config?.enable_lut ?? true) && this.gpuLut;
+    // Finished images (JPEG/PNG) go through the SAME pipeline as a generic RAW:
+    // the linearised image is treated as scene-referred so the film looks (LUT +
+    // base lift + optical effects) grade it best-effort, which is what users
+    // expect when applying a "look" to a photo. (_isPhoto still routes export to
+    // the resident render, since LibRaw can't re-decode a JPEG at full size.)
     // Imported "Photo LUTs" are authored for a display-referred sRGB/Rec.709
     // image, not our ACEScct intermediate. They get the Natural display render
     // as input (see the display branch below) and NONE of the film-LUT exposure
@@ -556,6 +726,11 @@ export class FlashbackProcessor {
         // Total EV already applied to this buffer (base lift + user exposure +
         // reverse-AE) so halation's threshold can stay scene-referred like desktop.
         exposure_ev + baseLift + preLutEv,
+        // Tiled full-res export passes the strip's region + pre-built global
+        // bloom/halation buffers; all null for the normal single-pass render.
+        opts.region ?? null,
+        opts.bloomGlowSmall ?? null,
+        opts.halationGlowSmall ?? null,
       );
     }
 
@@ -640,6 +815,7 @@ export class FlashbackProcessor {
         finalBuf, w, h, count, this.config,
         (key, cnt) => this._poolBuf(key, cnt),
         opts.scale ?? 1,
+        opts.region ?? null,
       );
     }
 

@@ -21,6 +21,7 @@ import {
   LINSRGB_TO_ACESCG, SENSOR_BLACK,
   FLASHBACK_EXPOSURE_COMP_EV, LIBRAW_PREMUL,
   ASN_D50, ASN_LIBRAW_CAL, FM1, FM1_WB_TO_ACESCG, computeFlashbackCCM,
+  genericRawBoostEv,
 } from './config.js';
 import { decodeOne35HalfSize, decodeOne35Full } from './one35-dng.js';
 
@@ -212,7 +213,8 @@ const FLASHBACK_EDGE_CROP = 0;
  *             asn: number[]|null, fm1: number[]|null }}
  */
 export function sniffMeta(buffer) {
-  const out = { make: null, exposureS: null, dateTaken: null, asn: null, fm1: null };
+  const out = { make: null, model: null, exposureS: null, iso: null, fNumber: null,
+                focalLength: null, dateTaken: null, asn: null, fm1: null, baselineExposure: null };
   try {
     const dv = new DataView(buffer);
     if (dv.byteLength < 16) return out;
@@ -250,9 +252,26 @@ export function sniffMeta(buffer) {
     // DNG writers scatter these: DateTimeOriginal (0x9003) can live in IFD0
     // (Leica does this) or in the Exif sub-IFD; 0x0132 ModifyDate is the
     // last-ditch fallback. Scan both IFDs for everything.
-    const ifd0 = scan(dv.getUint32(4, le), [0x010F, 0x0132, 0x8769, 0x9003, 0xC628, 0xC714]);
+    const ifd0 = scan(dv.getUint32(4, le), [0x010F, 0x0110, 0x0132, 0x8769, 0x9003, 0xC628, 0xC714, 0xC62A]);
 
     if (ifd0[0x010F] !== undefined) out.make = ascii(ifd0[0x010F]);
+    if (ifd0[0x0110] !== undefined) out.model = ascii(ifd0[0x0110]);
+
+    // BaselineExposure (0xC62A): one SRATIONAL (type 10) EV — the manufacturer/
+    // ACR intended lift from raw mid-grey to display mid-grey. Tier-1 signal for
+    // generic-RAW exposure anchoring (foreign DNGs / ProRAW). Mirrors upstream.
+    if (ifd0[0xC62A] !== undefined) {
+      const e = ifd0[0xC62A];
+      const type = dv.getUint16(e + 2, le);
+      if (type === 10 || type === 5) {
+        const off = dv.getUint32(e + 8, le);   // SRATIONAL is 8 bytes → out-of-line
+        if (off + 8 <= dv.byteLength) {
+          const n = type === 10 ? dv.getInt32(off, le)     : dv.getUint32(off, le);
+          const d = type === 10 ? dv.getInt32(off + 4, le) : dv.getUint32(off + 4, le);
+          if (d) out.baselineExposure = n / d;
+        }
+      }
+    }
 
     // AsShotNeutral (0xC628), 3 values — the One35 stores them as SHORT/LONG
     // integers (e.g. [480,1024,583]) rather than the usual RATIONALs, so read
@@ -301,18 +320,24 @@ export function sniffMeta(buffer) {
       }
     }
 
+    // Read a RATIONAL (8 bytes, out-of-line) at an entry offset → number | null.
+    const ratAt = (e) => {
+      const off = dv.getUint32(e + 8, le);
+      if (off + 8 > dv.byteLength) return null;
+      const num = dv.getUint32(off, le), den = dv.getUint32(off + 4, le);
+      return den > 0 ? num / den : null;
+    };
+    // Read a SHORT/LONG (inline) at an entry offset → number.
+    const intAt = (e) => (dv.getUint16(e + 2, le) === 3 ? dv.getUint16(e + 8, le) : dv.getUint32(e + 8, le));
+
     if (ifd0[0x8769] !== undefined) {
       const exifIfd = dv.getUint32(ifd0[0x8769] + 8, le);
-      const exif = scan(exifIfd, [0x829A, 0x9003]);          // ExposureTime, DateTimeOriginal
-      if (exif[0x829A] !== undefined) {
-        const e = exif[0x829A];
-        const off = dv.getUint32(e + 8, le);                 // RATIONAL: 8 bytes
-        if (off + 8 <= dv.byteLength) {
-          const num = dv.getUint32(off, le);
-          const den = dv.getUint32(off + 4, le);
-          if (den > 0 && num > 0) out.exposureS = num / den;
-        }
-      }
+      // ExposureTime, ISO, FNumber, FocalLength, DateTimeOriginal
+      const exif = scan(exifIfd, [0x829A, 0x8827, 0x829D, 0x920A, 0x9003]);
+      if (exif[0x829A] !== undefined) { const v = ratAt(exif[0x829A]); if (v) out.exposureS = v; }
+      if (exif[0x8827] !== undefined) { const v = intAt(exif[0x8827]); if (v) out.iso = v; }
+      if (exif[0x829D] !== undefined) { const v = ratAt(exif[0x829D]); if (v) out.fNumber = v; }
+      if (exif[0x920A] !== undefined) { const v = ratAt(exif[0x920A]); if (v) out.focalLength = v; }
       if (exif[0x9003] !== undefined) out.dateTaken = ascii(exif[0x9003]);
     }
     if (!out.dateTaken && ifd0[0x9003] !== undefined) out.dateTaken = ascii(ifd0[0x9003]);
@@ -440,10 +465,14 @@ export class RawDecoder {
         if (width > margin * 4 && height > margin * 4)
           ({ pixels, width, height } = cropBorder(pixels, width, height, margin));
 
-        // Highlight recovery: run on true raw values, returns WB-normalized pixels
-        // (raw / ASN_D50). Use the fixed ASN_D50 so FM1_WB_TO_ACESCG (which expects
-        // ASN_D50-normalised input) stays correct. evComp=0 so no extra CCM scaling.
-        recoverHighlights(pixels, ASN_D50);
+        // Highlight recovery white-balances on the CPU (returns raw / neutral).
+        // Default: the fixed ASN_D50 daylight neutral — one calibrated WB for
+        // every shot. Camera WB (opt-in): use THIS file's AsShotNeutral so warm/
+        // cool scenes self-correct like the desktop's per-file WB. Either way the
+        // result is WB-normalised (neutral → [1,1,1]), so FM1_WB_TO_ACESCG stays
+        // the correct matrix. evComp=0 so no extra CCM scaling.
+        const wbAsn = (opts.cameraWb && sniffed.asn) ? sniffed.asn : ASN_D50;
+        recoverHighlights(pixels, wbAsn);
         const k = Math.pow(2, FLASHBACK_EXPOSURE_COMP_EV);
         const ccm = k === 1 ? FM1_WB_TO_ACESCG : FM1_WB_TO_ACESCG.map(v => v * k);
 
@@ -452,6 +481,8 @@ export class RawDecoder {
           asn:       sniffed.asn,
           exposureS: sniffed.exposureS,
           dateTaken: sniffed.dateTaken,
+          make:      sniffed.make,  model: sniffed.model,
+          iso:       sniffed.iso,   fNumber: sniffed.fNumber, focalLength: sniffed.focalLength,
           metadata:  null,
         };
       }
@@ -541,7 +572,13 @@ export class RawDecoder {
         // Always use the hardcoded calibrated FM1 (see A1 finding above).
         ccm = computeFlashbackCCM(FM1, FLASHBACK_EXPOSURE_COMP_EV, premul, aceR, aceB);
       } else {
-        ccm = LINSRGB_TO_ACESCG;
+        // Generic (foreign) RAW: re-anchor libraw's generic develop to the level
+        // the render expects, plus a per-file residual (embedded BaselineExposure
+        // → per-make table → 0). Folded into the matrix as a pure linear scale.
+        const make = sniffed.make ?? meta?.camera_make ?? meta?.make ?? null;
+        const boostEv = genericRawBoostEv(make, sniffed.baselineExposure);
+        const gk = Math.pow(2, boostEv);
+        ccm = gk === 1 ? LINSRGB_TO_ACESCG : LINSRGB_TO_ACESCG.map((v) => v * gk);
       }
 
       const asn = isFlashback ? sniffed.asn : null;   // metadata only; not used for colour
@@ -560,6 +597,12 @@ export class RawDecoder {
         exposureS:   sniffed.exposureS ?? (meta?.shutter > 0 ? meta.shutter : null),
         // EXIF capture date ("YYYY:MM:DD HH:MM:SS") — for the date stamp.
         dateTaken:   sniffed.dateTaken,
+        // Camera info for the metadata panel — sniffed first, libraw as fallback.
+        make:        sniffed.make ?? meta?.camera_make ?? meta?.make ?? null,
+        model:       sniffed.model ?? meta?.camera_model ?? meta?.model ?? null,
+        iso:         sniffed.iso ?? (meta?.iso_speed > 0 ? meta.iso_speed : null),
+        fNumber:     sniffed.fNumber ?? (meta?.aperture > 0 ? meta.aperture : null),
+        focalLength: sniffed.focalLength ?? (meta?.focal_len > 0 ? meta.focal_len : null),
         metadata:    meta,
       };
     }

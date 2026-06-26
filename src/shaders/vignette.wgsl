@@ -16,8 +16,12 @@ struct U {
     strength:    f32,
     feather:     f32,
     color_shift: f32,
-    _p0:         f32,
-    _p1:         f32,
+    // Tiled full-res export: this buffer may be a horizontal STRIP. y_offset is
+    // the strip's first row in the full frame and full_height is the full frame
+    // height, so the vignette centres on the WHOLE image, not the strip.
+    // Defaults (y_offset=0, full_height=height) reproduce the untiled render.
+    y_offset:    f32,
+    full_height: f32,
     _p2:         f32,
 }
 
@@ -32,9 +36,10 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     if pixel >= W * H { return; }
 
     let x = f32(pixel % W);
-    let y = f32(pixel / W);
+    let y = f32(pixel / W) + u.y_offset;            // global row in the full frame
+    let fullH = max(u.full_height, u.height);        // full frame height (>= strip)
     let nx = (x / max(u.width  - 1.0, 1.0)) * 2.0 - 1.0;
-    let ny = (y / max(u.height - 1.0, 1.0)) * 2.0 - 1.0;
+    let ny = (y / max(fullH    - 1.0, 1.0)) * 2.0 - 1.0;
     let d  = sqrt(nx * nx + ny * ny) / 1.41421356;
 
     let start = 1.0 - clamp(u.feather, 0.0, 1.0);

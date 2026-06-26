@@ -258,6 +258,39 @@ Contributions, issues, and forks are welcome under the terms of the GPL-3.0 lice
 
 ## Changelog
 
+### 1.3.0
+
+**Open more than DNG** — import other RAW formats (CR2/CR3, NEF, ARW, RAF, RW2, ORF and
+more) and JPEG/PNG, with the full looks & effects applied. Both paths are experimental:
+the looks are calibrated for the One35 sensor, so colour/exposure on non-One35 files are
+best-effort (foreign RAW uses a faithful port of the desktop's per-make exposure
+anchoring; an **EXP** tag marks non-One35 files).
+
+**Auto WB** — a per-photo effect (on by default, with a global default in Settings) that
+develops each photo with its own as-shot camera white balance, so warm/cool scenes
+self-correct. Toggle it off per photo to keep the as-shot balance.
+
+**Full-resolution export on iPhone** — true full-res output now works on iOS via tiled
+rendering, which bounds peak GPU memory so the tab no longer crashes. Halation and bloom
+are computed as global low-res pre-passes; the result is pixel-identical to the
+single-pass desktop render.
+
+**Undo / redo** — per-photo edit history covering adjustments, effects, and profile
+changes, on the look-tools row.
+
+**Clipping warnings** — a toggle alongside the histogram paints blown highlights red and
+crushed shadows blue on the preview.
+
+**Photo info** — tap the filename for a metadata sheet (camera, exposure, ISO, etc.).
+
+**Cleaner full-res detail** — an edge-directed (Hamilton–Adams) demosaic reduces the
+zipper/fringe artifacts on fine detail in full-resolution exports, while staying
+mean-preserving so the export still matches the preview.
+
+**Halation warmth** — a second Halation slider tunes how warm the highlight glow reddens.
+Plus: browse the filmstrip while full screen, a clearer "enable WebGPU" screen when it's
+unavailable, and the Disposable softness tuned to match the desktop app.
+
 ### 1.2.1
 
 **Halation parity fix** — the halation highlight threshold is now measured against

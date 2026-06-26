@@ -21,6 +21,7 @@ import {
   saveCustomLut, listCustomLuts, getCustomLut, deleteCustomLut,
 } from './core/idb.js';
 import { RawDecoder } from './core/raw-decoder.js';
+import { decodeImageFile } from './core/image-decoder.js';
 import { init as initGPU, getInitError } from './core/gpu.js';
 import { FlashbackProcessor } from './core/processor.js';
 import { loadGpuLut, parseCube, uploadLut } from './core/lut.js';
@@ -44,6 +45,7 @@ const state = {
   activeLutId:  null,     // id of an active user-imported LUT, or null for the vibe's own
   config:       { ...DEFAULT_CONFIG },
   adjust:       defaultAdjust(), // core sliders (persisted)
+  autoWb:       true,    // per-photo Auto WB (camera as-shot WB); baked at decode
   jpegQuality:  0.95,  // runtime float 0-1; synced from state.settings.jpegQuality
   dateStamp:    false,    // burn the date into preview + JPEG (persisted)
   frameStamp:   false,    // burn the frame number (persisted)
@@ -68,6 +70,9 @@ const state = {
   _copySource:  -1,     // index the look was copied from (outlined; can't paste onto it)
   _selectMode:  false,  // filmstrip multi-select mode (UI-3)
   _selected:    new Set(), // selected photo indices while in select mode
+  _history:     [],     // undo/redo snapshots of the current photo's edits
+  _histIdx:     -1,     // pointer into _history
+  _applyingHistory: false, // guard so applying a snapshot doesn't record one
 };
 
 // ─── DOM references ───────────────────────────────────────────────────────────
@@ -200,9 +205,7 @@ function showUpdateBanner(reg) {
   if (!device) {
     const reason = getInitError() || 'WebGPU is unavailable on this browser/device.';
     console.warn('[app] WebGPU unavailable:', reason);
-    // Show the real reason (not an iOS-only message) so desktop users can act on
-    // it — and so a hard-to-reproduce failure can be reported back accurately.
-    showToast(`WebGPU unavailable — ${reason}`, 8000, true);
+    showWebGpuHelp(reason);
     return;
   }
   console.log('[app] WebGPU available — initialising GPU pipeline.');
@@ -212,6 +215,8 @@ function showUpdateBanner(reg) {
 
   // Push current user settings + config into the processor.
   state._processor.setConfig(state.config);
+  state.autoWb                   = defaultAutoWb();
+  state._processor.cameraWb      = state.autoWb;
   state._processor.saturation    = state.saturation;
   syncUserSettingsToProcessor();
 
@@ -233,6 +238,47 @@ window.addEventListener('gpu-device-lost', () => {
   bar.addEventListener('click', () => location.reload(), { once: true });
   document.body.appendChild(bar);
 });
+
+/**
+ * Full-screen explainer when WebGPU isn't available — the app can't run without
+ * it, so instead of a fleeting toast, tell the user WHY and exactly what to try
+ * for their browser. (A WebGL/WASM fallback is a separate, larger effort.)
+ */
+function showWebGpuHelp(reason) {
+  if ($('gpu-help')) return;
+  const ua = navigator.userAgent;
+  const isIOS = /iP(hone|ad|od)/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isFirefox = /Firefox/.test(ua);
+  const isSafari = /Safari/.test(ua) && !/Chrome|Chromium|Edg|CriOS|FxiOS/.test(ua);
+  let steps;
+  if (isIOS) {
+    steps = `<li>Update to <b>iOS&nbsp;17 or later</b> — WebGPU needs a recent Safari.</li>
+      <li>Already on iOS&nbsp;18+? Fully close the app (swipe it away) and reopen it.</li>
+      <li>Still stuck? Settings → Safari → Advanced → Feature Flags → enable <b>WebGPU</b>.</li>`;
+  } else if (isFirefox) {
+    steps = `<li>Open <b>about:config</b>, set <b>dom.webgpu.enabled</b> to <b>true</b>, then reload.</li>
+      <li>Or open this page in <b>Chrome</b> or <b>Edge</b>, where WebGPU is on by default.</li>`;
+  } else if (isSafari) {
+    steps = `<li>Update to <b>macOS Sonoma or later</b> (WebGPU is on by default there).</li>
+      <li>On older Safari: Develop → Feature Flags → enable <b>WebGPU</b>.</li>`;
+  } else {
+    steps = `<li>Turn on <b>Settings → System → "Use graphics acceleration when available"</b>, then relaunch the browser.</li>
+      <li>Open <b>chrome://gpu</b> — "WebGPU" should read <i>Hardware accelerated</i>. If it's blocklisted, updating your graphics driver usually fixes it.</li>
+      <li>Or try a different up-to-date Chromium browser.</li>`;
+  }
+  const el = document.createElement('div');
+  el.id = 'gpu-help';
+  el.innerHTML = `
+    <div class="gpu-help-card">
+      <h2>This editor needs WebGPU</h2>
+      <p>Your browser couldn't start WebGPU, which the photo pipeline runs on. Here's how to enable it:</p>
+      <ul>${steps}</ul>
+      <p class="gpu-help-reason">Details: ${reason}</p>
+      <button type="button" id="gpu-help-reload">Reload</button>
+    </div>`;
+  document.body.appendChild(el);
+  $('gpu-help-reload')?.addEventListener('click', () => location.reload());
+}
 
 /** Mirror the slider-controlled user settings into the processor. */
 function syncUserSettingsToProcessor() {
@@ -434,6 +480,9 @@ function selectVibe(vibeId) {
       if (state.hasImage) triggerRender();
     });
   }
+  // A profile change is an undoable edit (it's part of the look), so record it
+  // rather than resetting history. Skipped while restoring a history snapshot.
+  if (!state._applyingHistory) scheduleHistory();
 }
 
 vibePills.forEach((pill) => {
@@ -458,6 +507,49 @@ $('settings-whatsnew-btn')?.addEventListener('click', () => {
   openWhatsNew();
 });
 whatsNewSheet?.querySelectorAll('[data-close="whatsnew-sheet"]').forEach((el) => el.addEventListener('click', closeWhatsNew));
+
+// ─── Photo info (EXIF) sheet ──────────────────────────────────────────────────
+// Tap the filename to see the photo's camera metadata.
+const metaSheet = $('meta-sheet');
+function closeMetaSheet() { metaSheet?.classList.remove('open'); }
+metaSheet?.querySelectorAll('[data-close="meta-sheet"]').forEach((el) => el.addEventListener('click', closeMetaSheet));
+filenameDisplay?.addEventListener('click', () => {
+  if (!state.hasImage || !state._currentMeta?.length) return;
+  const dl = $('meta-list');
+  if (dl) dl.innerHTML = state._currentMeta
+    .map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd>`).join('');
+  metaSheet?.classList.add('open');
+});
+
+/** Minimal HTML escape for metadata values (filenames can contain anything). */
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+/** Build the photo-info rows from a decode result. Only includes fields we have. */
+function buildCurrentMeta(decoded, name) {
+  const rows = [];
+  const fmtShutter = (s) => (s >= 1 ? `${(+s).toFixed(1)}s` : `1/${Math.round(1 / s)}s`);
+  const make = (decoded.make ?? '').trim();
+  const model = (decoded.model ?? '').trim();
+  // Many cameras put the make in the model string too — don't repeat it.
+  const cam = (make && model)
+    ? (model.toLowerCase().startsWith(make.toLowerCase()) ? model : `${make} ${model}`)
+    : (make || model);
+  if (cam) rows.push(['Camera', cam]);
+  if (decoded.iso) rows.push(['ISO', String(Math.round(decoded.iso))]);
+  if (decoded.fNumber) rows.push(['Aperture', `ƒ/${(+decoded.fNumber).toFixed(1)}`]);
+  if (decoded.exposureS) rows.push(['Shutter', fmtShutter(decoded.exposureS)]);
+  if (decoded.focalLength) rows.push(['Focal length', `${Math.round(decoded.focalLength)} mm`]);
+  if (decoded.dateTaken) {
+    rows.push(['Date', String(decoded.dateTaken).replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3')]);
+  }
+  rows.push(['File', name]);
+  rows.push(['Profile', decoded.isFlashback === false
+    ? (decoded.isPhoto ? 'Imported image — effects best-effort' : 'Foreign RAW — experimental')
+    : 'Flashback One35']);
+  return rows;
+}
 
 // ─── Custom presets ("save your look as a profile") ───────────────────────────
 
@@ -532,6 +624,7 @@ function loadPreset(p) {
   syncUserSettingsToProcessor();
   if (state.processorReady) ensureLutForVibe(state.activeVibe).then(() => { if (state.hasImage) triggerRender(); });
   schedulePersist();
+  if (!state._applyingHistory) scheduleHistory();   // preset selection is undoable
 }
 
 /**
@@ -699,6 +792,7 @@ async function applyCustomLut(rec) {
   await ensureLutByPath(state.config.lut_path);
   if (state.hasImage) triggerRender();
   schedulePersist();
+  if (!state._applyingHistory) scheduleHistory();   // applying an imported LUT is undoable
 }
 
 async function deleteLutFlow(rec) {
@@ -899,9 +993,16 @@ function openFxSlider(btn) {
     saToggle.setAttribute('hidden', '');
   }
 
-  const slider = btn.dataset.slider ? document.getElementById(btn.dataset.slider) : null;
-  if (slider) { slider.classList.add('fx-sa-active'); saResetBtn?.removeAttribute('hidden'); }
-  else        { saResetBtn?.setAttribute('hidden', ''); }
+  // An effect may expose more than one slider (comma-separated ids, e.g.
+  // Halation → strength + warmth). Activate each so they all show.
+  const ids = (btn.dataset.slider ?? '').split(',').map(s => s.trim()).filter(Boolean);
+  let anyShown = false;
+  for (const id of ids) {
+    const slider = document.getElementById(id);
+    if (slider) { slider.classList.add('fx-sa-active'); anyShown = true; }
+  }
+  if (anyShown) saResetBtn?.removeAttribute('hidden');
+  else          saResetBtn?.setAttribute('hidden', '');
 }
 
 function toggleFxEffect(btn) {
@@ -963,11 +1064,12 @@ document.querySelectorAll('.fx-btn').forEach(btn => {
 
 // Reset-to-default value in slider area
 $('fx-sa-reset-val')?.addEventListener('click', () => {
-  const slider = document.querySelector('.fx-sa-slider.fx-sa-active');
-  if (!slider) return;
-  const def = parseFloat(slider.dataset.default ?? slider.dataset.value);
-  setSliderValue(slider, def);
-  handleSliderChange(slider.dataset.param, def);
+  // Reset every slider currently shown (an effect may expose several).
+  document.querySelectorAll('.fx-sa-slider.fx-sa-active').forEach((slider) => {
+    const def = parseFloat(slider.dataset.default ?? slider.dataset.value);
+    setSliderValue(slider, def);
+    handleSliderChange(slider.dataset.param, def);
+  });
 });
 
 
@@ -991,6 +1093,7 @@ document.querySelectorAll('.fx-toggle input[type="checkbox"]').forEach((cb) => {
     state.config[key] = cb.checked;
     if (state.hasImage) triggerRender();
     schedulePersist();
+    scheduleHistory();
   });
 });
 
@@ -1001,6 +1104,26 @@ function syncEffectToggles() {
     const key    = `enable_${effect === 'ca' ? 'chromatic_aberration' : effect}`;
     if (key in state.config) cb.checked = Boolean(state.config[key]);
   });
+  syncFxBtnStates();
+}
+
+// Auto WB is per-photo and baked in at DECODE time, so toggling it RE-DECODES the
+// current photo (unlike the instant render-time effects). It carries no
+// data-effect, so the generic effect-checkbox loop above skips it and this
+// dedicated handler runs instead. Fires for every toggle path (button tap →
+// slider-area switch, long-press, programmatic).
+$('fx-autowb')?.addEventListener('change', (e) => {
+  state.autoWb = e.target.checked;
+  syncFxBtnStates();
+  if (state._processor) state._processor.cameraWb = state.autoWb;
+  if (state.hasImage) reloadCurrentPhoto();
+  schedulePersist();
+});
+
+/** Reflect the current photo's Auto WB state on its button + hidden checkbox. */
+function syncAutoWbUI() {
+  const cb = $('fx-autowb');
+  if (cb) cb.checked = !!state.autoWb;
   syncFxBtnStates();
 }
 
@@ -1043,6 +1166,7 @@ function handleSliderChange(param, value) {
       state._processor.saturation = value;
     if (state.hasImage) triggerRender();
     schedulePersist();
+    scheduleHistory();
     return;
   }
   const key = keyMap[param] ?? param;
@@ -1058,6 +1182,7 @@ function handleSliderChange(param, value) {
   }
   if (state.hasImage) triggerRender();
   schedulePersist();
+  scheduleHistory();
 }
 
 initSliders(document, handleSliderChange);
@@ -1098,6 +1223,7 @@ function syncEffectSliders() {
   const paramToConfig = {
     grain_strength:    state.config.grain_strength,
     halation_strength: state.config.halation_strength,
+    halation_warmth_pct: state.config.halation_warmth_pct,
     ca_strength:       state.config.ca_strength,
     softness_sigma:    state.config.softness_sigma,
     sharpen_strength:  state.config.sharpen_strength,
@@ -1262,20 +1388,54 @@ document.addEventListener('touchend', (e) => {
 function toggleZen() {
   state.isZen = !state.isZen;
   document.body.classList.toggle('zen', state.isZen);
-  requestAnimationFrame(() => {
-    if (state.hasImage && state.processorReady) triggerRender(false);
-  });
+  // Reading clientWidth below forces the relayout, then we redraw the cached
+  // frame at the new size in the SAME step — no stretch/squash while resizing.
+  relayoutCanvas();
+  if (state.isZen) showToast('Full screen — tap photo to exit', 1600);
 }
 
 // ─── Histogram (opt-in) ───────────────────────────────────────────────────────
+
+const clipBtn = $('clip-btn');
 
 histBtn?.addEventListener('click', () => {
   state.histOpen = !state.histOpen;
   histCanvas?.classList.toggle('hidden', !state.histOpen);
   histBtn.classList.toggle('active', state.histOpen);
   histBtn.setAttribute('aria-pressed', String(state.histOpen));
+  // The clipping toggle rides with the histogram. Closing the histogram also
+  // turns clipping off so the overlay can't linger invisibly.
+  clipBtn?.classList.toggle('hidden', !state.histOpen);
+  if (!state.histOpen && state.clipWarn) {
+    state.clipWarn = false;
+    clipBtn?.classList.remove('active');
+    clipBtn?.setAttribute('aria-pressed', 'false');
+    if (state._lastImageData) drawToCanvas(state._lastImageData);
+  }
   if (state.histOpen && state._lastImageData) drawHistogram(state._lastImageData);
 });
+
+// Clipping warnings: paint blown highlights red and crushed shadows blue on the
+// preview, so over/under-exposure is obvious. Toggled with the histogram open.
+clipBtn?.addEventListener('click', () => {
+  state.clipWarn = !state.clipWarn;
+  clipBtn.classList.toggle('active', state.clipWarn);
+  clipBtn.setAttribute('aria-pressed', String(state.clipWarn));
+  if (state._lastImageData) drawToCanvas(state._lastImageData);
+});
+
+/** Return a copy of `img` with clipped pixels painted: blown highlights red,
+ *  crushed shadows blue. Used only when the clipping warning is on. */
+function paintClipping(img) {
+  const src = img.data;
+  const out = new Uint8ClampedArray(src);   // clone — never touch the source/histogram data
+  for (let i = 0; i < out.length; i += 4) {
+    const mx = Math.max(out[i], out[i + 1], out[i + 2]);
+    if (mx >= 250)      { out[i] = 255; out[i + 1] = 45;  out[i + 2] = 45;  }  // blown highlight
+    else if (mx <= 4)   { out[i] = 60;  out[i + 1] = 120; out[i + 2] = 255; }  // crushed shadow
+  }
+  return new ImageData(out, img.width, img.height);
+}
 
 /** Draw an RGB histogram from an ImageData onto the small overlay canvas. */
 function drawHistogram(imageData) {
@@ -1367,8 +1527,10 @@ async function openFiles() {
         id: 'flashback-dng',          // browser persists THIS id's directory
         multiple: true,
         types: [{
-          description: 'RAW photo (DNG / TIFF)',
-          accept: { 'image/x-adobe-dng': ['.dng'], 'image/tiff': ['.tif', '.tiff'] },
+          description: 'RAW photo (DNG, CR2/CR3, NEF, ARW, RAF, …)',
+          // One MIME bucket carrying every RAW extension — keeps the picker's
+          // file filter in sync with RAW_RE without enumerating per-vendor MIMEs.
+          accept: { 'image/x-dcraw': RAW_EXTS.map((e) => '.' + e) },
         }],
       });
     } catch (err) {
@@ -1402,13 +1564,62 @@ canvas?.addEventListener('drop', async (e) => {
   if (files.length) await handleFiles(files);
 });
 
+// Foreign RAW formats LibRaw can decode, beyond the native One35 DNG. The film
+// looks are calibrated for the One35 sensor, so these are BEST-EFFORT — an
+// experimental notice fires the first time a non-One35 file is opened.
+const RAW_EXTS = [
+  'dng', 'tif', 'tiff',                               // native + TIFF
+  'cr2', 'cr3', 'crw',                                // Canon
+  'nef', 'nrw',                                       // Nikon
+  'arw', 'sr2', 'srf',                                // Sony
+  'raf',                                              // Fujifilm
+  'rw2',                                              // Panasonic
+  'orf',                                              // Olympus / OM
+  'pef',                                              // Pentax
+  'srw',                                              // Samsung
+  'dcr', 'kdc',                                       // Kodak
+  'mrw',                                              // Minolta
+  'mos', 'iiq',                                       // Leaf / Phase One
+  '3fr', 'fff',                                       // Hasselblad
+  'erf',                                              // Epson
+  'rwl',                                              // Leica
+  'gpr',                                              // GoPro
+  'raw',                                              // generic
+];
+const RAW_RE = new RegExp('\\.(' + RAW_EXTS.join('|') + ')$', 'i');
+
+// Finished images: developed, display-referred. No film development possible —
+// they get the "effects-only" path (linearise → Natural render → optical effects).
+const PHOTO_EXTS = ['jpg', 'jpeg', 'jpe', 'png', 'webp'];
+const PHOTO_RE = new RegExp('\\.(' + PHOTO_EXTS.join('|') + ')$', 'i');
+
+/** True if `name` is a finished image (JPEG/PNG/WebP), not a RAW. */
+function isPhotoFile(name) { return PHOTO_RE.test(name); }
+
+/** Decode either a RAW (LibRaw) or a finished image (effects-only), by name. */
+async function decodeSource(buffer, name, decoder, cameraWb = false) {
+  if (isPhotoFile(name)) {
+    return decodeImageFile(buffer, { maxEdge: IS_IOS ? 2048 : 4096 });
+  }
+  return (decoder ?? new RawDecoder()).decode(buffer, { cameraWb: !!cameraWb });
+}
+
+/** Default Auto WB state for a freshly-opened photo (global setting, default on). */
+function defaultAutoWb() { return state.settings?.autoWbDefault ?? true; }
+
+/** The Auto WB choice for queue slot `i`: the live value for the current photo,
+ *  else that photo's saved per-image value (falling back to the global default). */
+function autoWbFor(i) {
+  if (typeof i !== 'number' || i === state._current) return state.autoWb;
+  return state._perImage?.[i]?.autoWb ?? defaultAutoWb();
+}
+
 async function handleFiles(files) {
-  // Accept DNG or TIFF
-  const valid = files.filter((f) =>
-    /\.(dng|tif|tiff)$/i.test(f.name)
-  );
+  // Accept any LibRaw-decodable RAW (native One35 DNG + foreign formats) plus
+  // finished images (JPEG/PNG/WebP) for the effects-only path.
+  const valid = files.filter((f) => RAW_RE.test(f.name) || PHOTO_RE.test(f.name));
   if (!valid.length) {
-    showToast('Please open a .dng or .tiff file', 3000, true);
+    showToast('Please open a RAW photo (DNG, CR2/CR3, NEF, ARW, RAF …) or a JPEG', 3500, true);
     return;
   }
 
@@ -1427,11 +1638,36 @@ async function handleFiles(files) {
   // per-image model: adjustments belong to a photo, not to the session).
   state.adjust = defaultAdjust();
   state.crop = defaultCropRect();
+  state.autoWb = defaultAutoWb();      // Auto WB default for new photos (global setting)
+  if (state._processor) state._processor.cameraWb = state.autoWb;
+  syncAutoWbUI();
   _syncCoreSliders();
   syncUserSettingsToProcessor();
 
   await openImage(valid[0], valid[0].name, { queueIndex: 0 });
+  resetHistory();     // fresh undo history for the just-opened photo
   generateThumbs();   // background — decodes the rest once, thumbs + cache
+}
+
+/**
+ * Re-decode + redraw the photo on screen. Used when a setting that's baked in at
+ * DECODE time changes (e.g. Camera WB), where a plain re-render isn't enough.
+ * Clears the decoded-pixel caches so the new setting actually takes effect.
+ */
+async function reloadCurrentPhoto() {
+  if (!state.hasImage || !state._processor) return;
+  const files = state._queue ?? [];
+  const i = state._current ?? 0;
+  // Invalidate only THIS photo's caches so the re-decode picks up the new
+  // decode-time setting (others keep their cached decodes).
+  _pixelCache.delete(i);
+  _previewCache.delete(i);
+  if (files[i]) {
+    await openImage(files[i], files[i].name, { queueIndex: i });
+  } else if (state._processor._origBuffer) {
+    // Resumed single photo (no queue File) — re-decode from the retained bytes.
+    await openImage(state._processor._origBuffer, state._processor.currentFile ?? 'photo', {});
+  }
 }
 
 // ─── Photo strip (multi-file navigation) ──────────────────────────────────────
@@ -1626,6 +1862,7 @@ function saveCurrentImageState() {
     rotation: state._processor?._rotation ?? 0,
     crop:     { ...state.crop },
     vibeId:   state.activeVibe,
+    autoWb:   state.autoWb,
   };
 }
 
@@ -1656,12 +1893,16 @@ async function selectPhoto(i) {
   const saved = state._perImage[i];
   state.adjust = saved?.adjust ? { ...saved.adjust } : defaultAdjust();
   state.crop = saved?.crop ? { ...saved.crop } : defaultCropRect();
+  state.autoWb = saved?.autoWb ?? defaultAutoWb();
+  if (state._processor) state._processor.cameraWb = state.autoWb;
+  syncAutoWbUI();
   _syncCoreSliders();
 
   // Restore this photo's vibe BEFORE checking the cache so the key is correct.
   const targetVibeId = saved?.vibeId ?? state.activeVibe;
   await _applyVibeConfig(targetVibeId);
   syncUserSettingsToProcessor();
+  resetHistory();   // each photo has its own fresh undo history
 
   // Fast path: preview cache hit → show photo instantly, reload GPU state quietly.
   const preview = _previewCache.get(i);
@@ -1714,7 +1955,8 @@ async function generateThumbs() {
       const buf = await files[i].arrayBuffer();
       // Decodes serialize through the decoder's own shared-worker queue; a
       // hung decode is killed by its watchdog and skips this file only.
-      const decoded = await dec.decode(buf);
+      // Finished images bypass LibRaw via the effects-only image decoder.
+      const decoded = await decodeSource(buf, files[i].name, dec, autoWbFor(i));
       if (token !== _thumbToken) return;
       cachePut(i, decoded);
       drawThumbAt(i, decoded);
@@ -1820,6 +2062,7 @@ function cachePut(i, dec) {
   _pixelCache.set(i, {
     u16, width: dec.width, height: dec.height,
     ccm: dec.ccm, isFlashback: dec.isFlashback,
+    isPhoto: dec.isPhoto ?? false,      // effects-only flag must survive the cache
     exposureS: dec.exposureS ?? null,   // reverse-AE must survive the cache
     dateTaken: dec.dateTaken ?? null,   // …and so must the date stamp
     asn: dec.asn ?? null,               // …and the white-balance neutral
@@ -1837,7 +2080,7 @@ function cacheGet(i) {
   for (let k = 0; k < pixels.length; k++) pixels[k] = c.u16[k] / 65535;
   return {
     pixels, width: c.width, height: c.height,
-    ccm: c.ccm, isFlashback: c.isFlashback,
+    ccm: c.ccm, isFlashback: c.isFlashback, isPhoto: c.isPhoto ?? false,
     exposureS: c.exposureS, dateTaken: c.dateTaken, asn: c.asn,
   };
 }
@@ -1852,6 +2095,9 @@ function cacheGet(i) {
  *   quiet: skip loading overlay + drawToCanvas (used when a preview cache hit
  *   already drew the frame — this call only restores GPU state for editing).
  */
+// Shown once per session when the first foreign (non-One35) RAW is opened.
+let _foreignNoticeShown = false;
+
 async function openImage(source, name, opts = {}) {
   if (!opts.quiet) showLoading(`Reading ${name}…`);
   try {
@@ -1867,13 +2113,31 @@ async function openImage(source, name, opts = {}) {
     if (!opts.quiet) showLoading(`Developing ${name}…`);
     let decoded = opts.cached ?? null;
     if (!decoded) {
-      decoded = await new RawDecoder().decode(buffer);
+      decoded = await decodeSource(buffer, name, null, autoWbFor(opts.queueIndex));
       if (typeof opts.queueIndex === 'number') {
         cachePut(opts.queueIndex, decoded);
         drawThumbAt(opts.queueIndex, decoded);
       }
     }
     const result = await state._processor.loadDecoded(decoded, name, buffer);
+
+    // Persistent "EXP" marker: anything that isn't a calibrated One35 decode
+    // (foreign RAW or JPEG) is best-effort.
+    updateExpBadge(decoded && decoded.isFlashback === false);
+    state._currentMeta = buildCurrentMeta(decoded, name);   // for the photo-info sheet
+
+    // First-time, once-per-session notices for the non-native import paths.
+    if (!opts.quiet && decoded && !_foreignNoticeShown) {
+      if (decoded.isPhoto) {
+        // JPEG/PNG: finished image graded best-effort through the film pipeline.
+        _foreignNoticeShown = true;
+        showToast('Experimental: JPEG/PNG — film looks applied best-effort to a finished image', 6000);
+      } else if (decoded.isFlashback === false) {
+        // Foreign RAW: decoded by LibRaw but film looks are One35-calibrated.
+        _foreignNoticeShown = true;
+        showToast('Experimental: non-One35 RAW — film looks are best-effort, exposure may need adjusting', 6000);
+      }
+    }
 
     if (!opts.quiet) {
       hideLoading();
@@ -1951,9 +2215,13 @@ resumeBtn?.addEventListener('click', async () => {
       return;
     }
     state._queue = []; state._perImage = []; state._current = 0;
+    state.autoWb = defaultAutoWb();
+    if (state._processor) state._processor.cameraWb = state.autoWb;
+    syncAutoWbUI();
     _pixelCache.clear();
     updateBatchButton(); renderPhotoStrip();
     await openImage(rec.bytes, rec.name, { fromResume: true });
+    resetHistory();
   } catch (err) {
     hideLoading();
     console.error('[app] resume failed:', err);
@@ -1965,6 +2233,12 @@ resumeBtn?.addEventListener('click', async () => {
 function setFilename(name) {
   filenameDisplay.title = name;
   filenameDisplay.textContent = name;
+}
+
+/** Show/hide the "EXP" experimental badge for non-One35 (foreign RAW / JPEG) files. */
+function updateExpBadge(experimental) {
+  const b = $('exp-badge');
+  if (b) b.hidden = !experimental;
 }
 
 /** Update the "n / N" photo-position indicator next to the filename. */
@@ -2038,22 +2312,21 @@ const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent)
   || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
 /**
- * Render for export. Full-resolution by default — the pure-JS full decoder
- * (decodeOne35Full) shares the preview's calibration, so a full-res file matches
- * what you see. The "Full-resolution export" setting can turn it off.
+ * Render for export, honoring the "Full-resolution export" setting.
  *
- * iOS is the exception: a 12.8 MP render needs several ~150 MB GPU float buffers
- * through the effects chain, which blows past iOS Safari's per-tab memory budget
- * and gets the tab KILLED (the PWA "reloads to the start screen"). There's no
- * catchable error for that, so we don't even attempt full-res on iOS — it always
- * exports at the resident (preview) size, which is what the desktop reference app
- * outputs anyway. Desktop/Android honor the setting.
+ * Desktop/Android full-res: the single-pass renderExportFull (one big render).
+ * iOS full-res: renderExportTiled — a 12.8 MP single-pass render needs ~1.4 GB of
+ * GPU buffers and gets the tab KILLED by iOS Safari's per-tab budget, so the tiled
+ * path processes the frame in horizontal strips (bounded peak memory) instead.
+ * Both fall back to the resident render on failure.
  */
 function renderForExport(opts = {}) {
-  const wantFull = (state.settings?.fullResExport ?? false) && !IS_IOS;
-  return wantFull
-    ? state._processor.renderExportFull(opts)
-    : state._processor.renderExport(opts);
+  if (state._processor) state._processor.cameraWb = state.autoWb;   // export this photo's WB
+  const wantFull = state.settings?.fullResExport ?? false;
+  if (!wantFull) return state._processor.renderExport(opts);
+  return IS_IOS
+    ? state._processor.renderExportTiled(opts)
+    : state._processor.renderExportFull(opts);
 }
 
 /** The look's name for export filenames: active preset name, else the vibe id. */
@@ -2222,9 +2495,13 @@ function updateLookToolsUI() {
   const n = state._queue?.length ?? 0;
   const armed = !!state._lookClipboard;
   const sel = state._selectMode;
+  const multi = n >= 2;                          // copy/paste/select need 2+ photos
+  const canUndo = state._histIdx > 0;
+  const canRedo = state._histIdx >= 0 && state._histIdx < state._history.length - 1;
   const show = (id, on) => $(id)?.classList.toggle('hidden', !on);
-  // The whole row only appears with 2+ photos (copy/paste is a multi-photo tool).
-  $('look-tools-row')?.classList.toggle('hidden', n < 2);
+  // The row appears with 2+ photos (copy/paste tools) OR when there's undo/redo
+  // history (so undo works on a single photo too).
+  $('look-tools-row')?.classList.toggle('hidden', !(multi || canUndo || canRedo));
   // Apply only shows when there's a real target that ISN'T the source: in select
   // mode, a selected non-source photo; otherwise the current photo ≠ source. When
   // you're sitting on the source, only "Apply all" shows — nudging you to pick
@@ -2232,13 +2509,16 @@ function updateLookToolsUI() {
   const hasApplyTarget = sel
     ? [...state._selected].some((i) => i !== state._copySource)
     : (state._current !== state._copySource);
-  show('copy-look-btn', !sel);                  // Copy hidden while selecting
-  show('paste-look-btn', armed && hasApplyTarget);
-  show('paste-all-btn', armed && !sel);         // quick apply-to-all when armed (no Select needed)
-  show('select-btn', true);
+  show('copy-look-btn', !sel && multi);         // Copy hidden while selecting / single photo
+  show('paste-look-btn', armed && hasApplyTarget && multi);
+  show('paste-all-btn', armed && !sel && multi); // quick apply-to-all when armed (no Select needed)
+  show('select-btn', multi);
   show('select-all-btn', sel);
   show('exclude-sel-btn', sel);
   show('remove-sel-btn', sel);
+  // Undo/Redo (right side): hidden while copying (armed) or selecting, per spec.
+  show('undo-btn', canUndo && !sel && !armed);
+  show('redo-btn', canRedo && !sel && !armed);
   $('copy-look-btn')?.classList.toggle('active', armed);   // outline the armed Copy
   const selBtn = $('select-btn');
   if (selBtn) {
@@ -2255,6 +2535,108 @@ function updateLookToolsUI() {
   const allBtn = $('select-all-btn');
   if (allBtn && sel) allBtn.textContent = (state._selected.size === n && n > 0) ? 'Deselect All' : 'Select All';
 }
+
+// ─── Undo / Redo ──────────────────────────────────────────────────────────────
+// History of the CURRENT photo's adjustment + effect edits (sliders, toggles,
+// push bypass, saturation). Scoped to the current vibe: switching vibes or photos
+// starts a fresh history (vibe/LUT changes aren't on the stack — they're discrete
+// and easy to redo by hand). Rotation/crop/Auto WB have their own controls.
+
+const HISTORY_MAX = 60;
+let _histTimer = null;
+
+/** Snapshot the editable state that undo/redo restores — the full look:
+ *  adjustments, effect config, saturation, AND the active profile (vibe / custom
+ *  preset / imported LUT) so a profile change can be undone too. */
+function snapshotEditState() {
+  return {
+    adjust: { ...state.adjust },
+    config: { ...state.config },
+    saturation: state.saturation,
+    activeVibe: state.activeVibe,
+    activePresetId: state.activePresetId,
+    activeLutId: state.activeLutId,
+  };
+}
+
+/** Reflect the active profile (vibe / preset / imported LUT) on the pill strip. */
+function syncLookPillsUI() {
+  const plainVibe = !state.activePresetId && !state.activeLutId;
+  vibePills.forEach((pill) => {
+    const on = plainVibe && pill.dataset.vibe === state.activeVibe;
+    pill.classList.toggle('active', on);
+    pill.setAttribute('aria-selected', String(on));
+  });
+  renderPresetPills();   // re-renders custom-preset pills with active = activePresetId
+  renderLutPills();      // re-renders imported-LUT pills with active = activeLutId
+  if (lutNameBadge) lutNameBadge.textContent = lutDisplayName(state.config?.lut_path);
+}
+
+/** Start a fresh history with the current state as the baseline (index 0). */
+function resetHistory() {
+  clearTimeout(_histTimer);
+  state._history = [snapshotEditState()];
+  state._histIdx = 0;
+  updateLookToolsUI();
+}
+
+/** Record an edit (debounced, so a slider drag becomes one undo step). */
+function scheduleHistory() {
+  if (state._applyingHistory || !state.hasImage) return;
+  clearTimeout(_histTimer);
+  _histTimer = setTimeout(() => {
+    const snap = snapshotEditState();
+    const cur = state._history[state._histIdx];
+    if (cur && JSON.stringify(cur) === JSON.stringify(snap)) return;   // no real change
+    state._history = state._history.slice(0, state._histIdx + 1);      // drop any redo branch
+    state._history.push(snap);
+    if (state._history.length > HISTORY_MAX) state._history.shift();
+    state._histIdx = state._history.length - 1;
+    updateLookToolsUI();
+  }, 350);
+}
+
+async function applyHistory(idx) {
+  const snap = state._history[idx];
+  if (!snap) return;
+  clearTimeout(_histTimer);          // cancel any pending capture
+  state._histIdx = idx;
+  state._applyingHistory = true;
+  try {
+    const lutChanged = snap.config?.lut_path !== state.config?.lut_path;
+    state.adjust = { ...snap.adjust };
+    state.config = { ...snap.config };
+    state.saturation = snap.saturation;
+    state.activeVibe = snap.activeVibe ?? state.activeVibe;
+    state.activePresetId = snap.activePresetId ?? null;
+    state.activeLutId = snap.activeLutId ?? null;
+    state._processor?.setConfig(state.config);
+    if (state._processor) state._processor.saturation = state.saturation;
+    syncUserSettingsToProcessor();
+    _syncCoreSliders();
+    syncEffectSliders();
+    syncEffectToggles();
+    syncLookPillsUI();              // restore the highlighted profile + LUT badge
+    if (lutChanged && state.processorReady) {
+      await ensureLutByPath(state.config?.lut_path);   // re-upload the snapshot's LUT
+    }
+    if (state.hasImage) triggerRender();
+    if (state._current >= 0 && state._perImage?.[state._current]) {
+      state._perImage[state._current].vibeId = state.activeVibe;   // keep strip badge in sync
+      updateThumbBadge(state._current);
+    }
+    schedulePersist();
+  } finally {
+    state._applyingHistory = false;
+    updateLookToolsUI();
+  }
+}
+
+function undo() { if (state._histIdx > 0) applyHistory(state._histIdx - 1); }
+function redo() { if (state._histIdx < state._history.length - 1) applyHistory(state._histIdx + 1); }
+
+$('undo-btn')?.addEventListener('click', undo);
+$('redo-btn')?.addEventListener('click', redo);
 
 /** Outline the photo a look was copied from (distinct from active/selected). */
 function markCopySource() {
@@ -2427,11 +2809,17 @@ async function runBatch(overrideFormat) {
       setProgress(batchDone, batchTotal, `Developing ${batchDone + 1} / ${batchTotal}: ${f.name}`);
       try {
         const buf = await f.arrayBuffer();
-        await state._processor.loadImage(buf, f.name);
+        // Each photo uses ITS OWN vibe + adjustments + rotation + Auto WB. Decode
+        // via decodeSource so per-photo Auto WB is honoured AND JPEG/PNG imports
+        // work (loadImage is RAW-only and decodes before WB can be set).
+        const per = state._perImage[i];
+        const photoAutoWb = per?.autoWb ?? defaultAutoWb();
+        state.autoWb = photoAutoWb;
+        state._processor.cameraWb = photoAutoWb;
+        const decoded = await decodeSource(buf, f.name, null, photoAutoWb);
+        await state._processor.loadDecoded(decoded, f.name, buf);
         setFilename(f.name);
         state.hasImage = true;
-        // Each photo uses ITS OWN vibe + adjustments + rotation.
-        const per = state._perImage[i];
         const photoVibeId = per?.vibeId ?? state.activeVibe;
         if (photoVibeId !== _batchVibe) {
           const factory = factoryStateFor(photoVibeId);
@@ -2473,6 +2861,9 @@ async function runBatch(overrideFormat) {
     state._current = lastDone;
     markActiveThumb();
     state.adjust = state._perImage[lastDone]?.adjust ?? defaultAdjust();
+    state.autoWb = state._perImage[lastDone]?.autoWb ?? defaultAutoWb();
+    if (state._processor) state._processor.cameraWb = state.autoWb;
+    syncAutoWbUI();
     _syncCoreSliders();
     const lastVibeId = state._perImage[lastDone]?.vibeId ?? state.activeVibe;
     if (lastVibeId !== state.activeVibe) selectVibe(lastVibeId);
@@ -3018,6 +3409,8 @@ async function drawToCanvas(imageData, opts = {}) {
   // While the crop editor is open it draws the full frame itself; otherwise the
   // committed crop is baked into what's shown.
   if (!state.cropEditing) imageData = applyCropStraighten(imageData);
+  // Clipping warnings paint onto a copy so the histogram's source stays clean.
+  if (state.clipWarn && !opts.interactive) imageData = paintClipping(imageData);
 
   const dpr = window.devicePixelRatio || 1;
   // Size from the canvas's own flex region (the area between the top bar and
@@ -3044,7 +3437,39 @@ async function drawToCanvas(imageData, opts = {}) {
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(bmp, dx, dy, dw, dh);
-  bmp.close();
+  // Cache the drawn frame so a SIZE-only change (zen toggle, resize) can be
+  // re-letterboxed synchronously — no stale-bitmap stretch while the GPU
+  // re-renders. (Replaces the previous bmp.close().)
+  state._lastBmp?.close();
+  state._lastBmp = bmp;
+  drawStamps(ctx, dx, dy, dw, dh);
+}
+
+/**
+ * Re-letterbox the last drawn frame at the canvas's CURRENT size, synchronously.
+ * Used when only the display size changed (entering/leaving full screen): the
+ * content is identical, so a GPU re-render is wasteful AND too slow — it lets the
+ * old backing store stretch/squash for a frame. Drawing the cached bitmap in the
+ * same synchronous step as the relayout keeps the photo crisp and steady.
+ */
+function relayoutCanvas() {
+  const bmp = state._lastBmp;
+  if (!bmp || !canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const W = Math.round(canvas.clientWidth * dpr);
+  const H = Math.round(canvas.clientHeight * dpr);
+  if (!W || !H) return;
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = '#0d0d0d';
+  ctx.fillRect(0, 0, W, H);
+  const scale = Math.min(W / bmp.width, H / bmp.height);
+  const dw = bmp.width * scale, dh = bmp.height * scale;
+  const dx = (W - dw) / 2, dy = (H - dh) / 2;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(bmp, dx, dy, dw, dh);
   drawStamps(ctx, dx, dy, dw, dh);
 }
 

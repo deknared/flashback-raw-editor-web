@@ -105,18 +105,38 @@ export function decodeOne35Full(buffer) {
     }
   }
 
-  // 2. Full green plane. RGGB: green sits where x,y parities differ; at red/blue
-  //    sites G is the average of its four orthogonal (all-green) neighbours.
+  // 2. Full green plane. RGGB: green sits where x,y parities differ. At red/blue
+  //    sites green is interpolated EDGE-DIRECTED (Hamilton–Adams): take the
+  //    horizontal or vertical green-neighbour pair along whichever direction has
+  //    the smaller gradient, refined by the same-colour second derivative (the
+  //    ±2 sample, same channel as the centre). This suppresses the zipper/maze
+  //    artifacts that plain 4-neighbour averaging leaves on fine high-contrast
+  //    detail (storefront lettering, railings) — only visible at heavy zoom in
+  //    the full-res export. The correction term is a zero-sum Laplacian, so the
+  //    green mean is preserved: the 2×-downscaled export still matches the
+  //    half-size preview's calibration (export == preview).
   const G = new Float32Array(W * H);
   for (let y = 0; y < H; y++) {
     const o   = y * W;
     const oUp = (y > 0     ? y - 1 : 1)     * W;   // mirror at the borders
     const oDn = (y < H - 1 ? y + 1 : H - 2) * W;
+    const oUU = (y >= 2     ? y - 2 : y + 2) * W;  // same-colour rows (±2)
+    const oDD = (y <= H - 3 ? y + 2 : y - 2) * W;
     for (let x = 0; x < W; x++) {
-      if (((x ^ y) & 1) === 1) { G[o + x] = bayer[o + x]; continue; }  // green site
-      const xL = x > 0     ? x - 1 : 1;
-      const xR = x < W - 1 ? x + 1 : W - 2;
-      G[o + x] = 0.25 * (bayer[o + xL] + bayer[o + xR] + bayer[oUp + x] + bayer[oDn + x]);
+      const i = o + x;
+      if (((x ^ y) & 1) === 1) { G[i] = bayer[i]; continue; }  // green site
+      const xL  = x > 0      ? x - 1 : 1;
+      const xR  = x < W - 1  ? x + 1 : W - 2;
+      const xLL = x >= 2     ? x - 2 : x + 2;       // same-colour columns (±2)
+      const xRR = x <= W - 3 ? x + 2 : x - 2;
+      const c   = bayer[i];
+      const lapH = 2 * c - bayer[o + xLL]  - bayer[o + xRR];
+      const lapV = 2 * c - bayer[oUU + x]  - bayer[oDD + x];
+      const gH = 0.5 * (bayer[o + xL]  + bayer[o + xR])  + 0.25 * lapH;
+      const gV = 0.5 * (bayer[oUp + x] + bayer[oDn + x]) + 0.25 * lapV;
+      const dH = Math.abs(bayer[o + xL]  - bayer[o + xR])  + Math.abs(lapH);
+      const dV = Math.abs(bayer[oUp + x] - bayer[oDn + x]) + Math.abs(lapV);
+      G[i] = dH < dV ? gH : dV < dH ? gV : 0.5 * (gH + gV);
     }
   }
 

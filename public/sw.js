@@ -10,7 +10,7 @@
 // Bumping CACHE_NAME changes this file's bytes, which makes the browser detect
 // an updated worker, install it, and purge older caches in `activate`. Bump it
 // whenever the precache list or strategy changes.
-const CACHE_NAME = 'flashback-v29';  // v29: v1.2.1 — halation threshold parity fix
+const CACHE_NAME = 'flashback-v40';  // v40: v1.3.0 — undo/redo covers profile changes; release
 
 // Files to pre-cache on install (app shell).
 const PRECACHE = [

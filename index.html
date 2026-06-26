@@ -61,7 +61,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
       </svg>
-      Open DNG File
+      Open Files
     </button>
     <button id="resume-btn" class="btn-secondary hidden">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -70,8 +70,8 @@
       <span id="resume-label">Resume last photo</span>
     </button>
     <p class="empty-hint">
-      Connect Flashback One35 v2 via USB-C →<br>
-      open Files app → copy DNG → tap Open
+      One35 DNG, other RAW formats, or JPEG.<br>
+      Connect One35 v2 via USB-C, or pick from Files.
     </p>
     <button id="info-btn-empty" class="text-link" type="button">ⓘ How it works</button>
     <button id="whatsnew-btn-empty" class="text-link" type="button">✨ What's new</button>
@@ -167,11 +167,15 @@
 
   <!-- Histogram overlay (opt-in; drawn from the current preview) -->
   <canvas id="histogram" class="hidden" aria-hidden="true" width="256" height="128"></canvas>
+  <!-- Clipping-warning toggle — shown with the histogram. Paints blown
+       highlights red and crushed shadows blue on the preview. -->
+  <button id="clip-btn" class="hidden" type="button" aria-pressed="false" aria-label="Toggle clipping warnings" title="Clipping warnings">⚠ Clipping</button>
 
   <!-- File info row — full filename under the photo (like the desktop app's
        bottom-left label) + photo position when several are loaded. -->
   <div id="file-info" class="hidden">
     <span id="filename-display" class="filename" title="Current file">—</span>
+    <span id="exp-badge" class="exp-badge" hidden title="Experimental — non-One35 file. The looks are calibrated for the One35 sensor, so colour and exposure are best-effort.">EXP</span>
     <span id="file-pos" class="hidden" aria-label="Photo position"></span>
   </div>
 
@@ -186,6 +190,10 @@
       <button id="exclude-sel-btn" class="look-tool-btn hidden" type="button" aria-label="Exclude selected from export" title="Exclude/include selected from batch export">Exclude</button>
       <button id="remove-sel-btn" class="look-tool-btn hidden" type="button" aria-label="Remove selected from queue" title="Remove selected photos">Remove</button>
       <button id="select-btn" class="look-tool-btn hidden" type="button" aria-label="Select photos" title="Select multiple photos">Select</button>
+    </div>
+    <div id="look-tools-right">
+      <button id="undo-btn" class="look-tool-btn hidden" type="button" aria-label="Undo" title="Undo last change">Undo</button>
+      <button id="redo-btn" class="look-tool-btn hidden" type="button" aria-label="Redo" title="Redo">Redo</button>
     </div>
   </div>
 
@@ -230,7 +238,8 @@
 
         <div class="slider-mini fx-sa-slider" id="fx-sm-push"       data-param="push_pull"        data-min="-2"  data-max="2"    data-step="0.1"   data-value="0"    ><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">0.0</span></div>
         <div class="slider-mini fx-sa-slider" id="fx-sm-grain"      data-param="grain_strength"   data-min="0"   data-max="3"    data-step="0.05"  data-value="0.8"  ><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">0.8</span></div>
-        <div class="slider-mini fx-sa-slider" id="fx-sm-halation"   data-param="halation_strength" data-min="0"   data-max="1"    data-step="0.05"  data-value="0.5"  ><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">0.5</span></div>
+        <div class="slider-mini fx-sa-slider" id="fx-sm-halation"   data-param="halation_strength" data-min="0"   data-max="1"    data-step="0.05"  data-value="0.5"  ><span class="slider-mini-label">Strength</span><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">0.5</span></div>
+        <div class="slider-mini fx-sa-slider" id="fx-sm-halation-warmth" data-param="halation_warmth_pct" data-min="100" data-max="200" data-step="5"  data-value="120"  ><span class="slider-mini-label">Warmth</span><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">120</span></div>
         <div class="slider-mini fx-sa-slider" id="fx-sm-ca"         data-param="ca_strength"       data-min="0"   data-max="0.03" data-step="0.001" data-value="0.005"><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">0.005</span></div>
         <div class="slider-mini fx-sa-slider" id="fx-sm-softness"   data-param="softness_sigma"    data-min="0"   data-max="3"    data-step="0.1"   data-value="0.5"  ><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">0.5</span></div>
         <div class="slider-mini fx-sa-slider" id="fx-sm-sharpen"    data-param="sharpen_strength"  data-min="0"   data-max="2"    data-step="0.05"  data-value="0.5"  ><div class="slider-track"><div class="slider-fill"></div><div class="slider-thumb"></div></div><span class="slider-val">0.5</span></div>
@@ -247,12 +256,17 @@
           <span class="fx-btn-label">Push</span>
           <span class="fx-btn-dot" aria-hidden="true"></span>
         </button>
+        <button class="fx-btn on" type="button" data-fx="autowb"     data-toggle="fx-autowb"     aria-label="Auto White Balance">
+          <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3 a9 9 0 0 1 0 18 z" fill="currentColor" stroke="none"/></svg>
+          <span class="fx-btn-label">Auto WB</span>
+          <span class="fx-btn-dot" aria-hidden="true"></span>
+        </button>
         <button class="fx-btn on" type="button" data-fx="grain"      data-slider="fx-sm-grain"      data-toggle="fx-grain"      aria-label="Grain">
           <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="7" cy="7" r="1.5"/><circle cx="15" cy="5" r="1.5"/><circle cx="19" cy="11" r="1.5"/><circle cx="5" cy="15" r="1.5"/><circle cx="12" cy="13" r="1.5"/><circle cx="18" cy="18" r="1.5"/><circle cx="9" cy="20" r="1.5"/><circle cx="14" cy="20" r="1"/></svg>
           <span class="fx-btn-label">Grain</span>
           <span class="fx-btn-dot" aria-hidden="true"></span>
         </button>
-        <button class="fx-btn" type="button" data-fx="halation"   data-slider="fx-sm-halation"   data-toggle="fx-halation"   aria-label="Halation">
+        <button class="fx-btn" type="button" data-fx="halation"   data-slider="fx-sm-halation,fx-sm-halation-warmth"   data-toggle="fx-halation"   aria-label="Halation">
           <svg class="fx-btn-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="currentColor" opacity="0.85"/><circle cx="12" cy="12" r="6.5" stroke="currentColor" stroke-width="1.5" opacity="0.5"/><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1" opacity="0.25"/></svg>
           <span class="fx-btn-label">Halation</span>
           <span class="fx-btn-dot" aria-hidden="true"></span>
@@ -312,6 +326,8 @@
         <label class="fx-toggle"><input type="checkbox" id="fx-lut"        checked data-effect="lut"></label>
         <label class="fx-toggle"><input type="checkbox" id="fx-push"       checked></label>
         <label class="fx-toggle"><input type="checkbox" id="fx-sat"        checked></label>
+        <!-- Auto WB: per-photo, re-decodes on toggle (no data-effect → custom handler). -->
+        <label class="fx-toggle"><input type="checkbox" id="fx-autowb"     checked></label>
       </div>
     </div><!-- /#effects-panel -->
 
@@ -425,18 +441,23 @@
       </header>
       <div class="sheet-body">
         <section>
-          <h3>1.2.1</h3>
+          <h3>1.3.0</h3>
+          <ul>
+            <li><b>Open more than DNG</b> — import other RAW formats (CR2/CR3, NEF, ARW, RAF and more) and JPEG/PNG, and apply the full looks &amp; effects to them. Both are <b>experimental</b>: the looks are calibrated for the One35 sensor, so colour and exposure on non-One35 files are best-effort (a small <b>EXP</b> tag marks them).</li>
+            <li><b>Auto WB</b> — a new effect (on by default) uses each photo's own camera white balance so warm/cool scenes self-correct. Turn it off per photo to keep the as-shot warmth.</li>
+            <li><b>Full-resolution export on iPhone</b> — true full-res output now works on iOS via tiled rendering, without the memory crash.</li>
+            <li><b>Undo &amp; redo</b> — step back and forward through your edits, including profile changes, per photo.</li>
+            <li><b>Clipping warnings</b> — toggle the histogram to flag blown highlights (red) and crushed shadows (blue).</li>
+            <li><b>Photo info</b> — tap the filename to see the camera, exposure and other details.</li>
+            <li><b>Browse in full screen</b> — the filmstrip stays while full screen, so you can swipe through your roll big.</li>
+            <li><b>Halation warmth</b> — a second slider tunes how warm the highlight glow reddens.</li>
+            <li><b>Cleaner full-res detail</b> — an edge-directed demosaic reduces fine-detail artifacts in full-resolution exports.</li>
+            <li><b>Disposable softness</b> tuned to match the desktop app.</li>
+          </ul>
+          <h3 style="margin-top:16px">Recently, in 1.2.1</h3>
           <ul>
             <li><b>Halation parity fix</b> — the highlight glow threshold now matches the desktop app, so halation no longer blooms from too many highlights.</li>
-          </ul>
-          <h3 style="margin-top:16px">Recently, in 1.2.0</h3>
-          <ul>
-            <li><b>Share looks</b> — export your current look to a file and import ones others share (Settings → Share Looks). Custom LUTs travel with the file.</li>
-            <li><b>Imported LUTs just work</b> — drop in any sRGB/Rec.709 photo LUT; it's colour-managed into the pipeline automatically.</li>
-            <li><b>Copy &amp; apply a look</b> across photos — copy from one frame, then apply to one, several (multi-select), or all.</li>
-            <li><b>Full-resolution export</b> on desktop &amp; Android, with a toggle in Settings.</li>
-            <li><b>Auto date stamp</b> from each photo's file date, plus a manual override.</li>
-            <li><b>Pinch-to-zoom</b> stays in the photo (no more accidental fullscreen), and an <b>update banner</b> tells you when a new version is ready.</li>
+            <li><b>Share looks</b>, <b>imported LUTs that just work</b>, <b>copy &amp; apply a look</b> across photos, full-resolution export on desktop &amp; Android, auto date stamp, and a new update banner.</li>
           </ul>
           <p style="margin-top:14px">
             <a id="whatsnew-github" href="https://github.com/deknared/flashback-raw-editor-web" target="_blank" rel="noopener">Full changelog on GitHub →</a>
@@ -461,10 +482,25 @@
 
         <section>
           <h3>What this is</h3>
-          <p>A film-look RAW editor for the Flashback One35 v2. It decodes your DNG,
-          applies a film "stock" (a colour LUT) plus optical effects, and exports a
+          <p>A film-look RAW editor built for the Flashback One35 v2. It decodes your
+          photo, applies a film "stock" (a colour LUT) plus optical effects, and exports a
           finished JPEG or 16-bit TIFF. Everything runs <strong>on this device</strong> —
           your photos never leave the phone, and it works fully offline once installed.</p>
+        </section>
+
+        <section>
+          <h3>Opening photos</h3>
+          <p>Tap <b>Open Files</b> and pick from your phone. It opens:</p>
+          <ul>
+            <li><b>One35 v2 DNG</b> — the native format the app is calibrated for. Best results.</li>
+            <li><b>Other RAW</b> (CR2/CR3, NEF, ARW, RAF, RW2, ORF, and more) — <b>experimental</b>.
+            These decode, but the film looks are tuned for the One35 sensor, so colour and
+            exposure are best-effort and may need a nudge with the sliders.</li>
+            <li><b>JPEG / PNG</b> — <b>experimental</b>. A finished photo gets the looks &amp;
+            effects applied best-effort; since it's already developed, it can't match a true
+            RAW develop.</li>
+          </ul>
+          <p>A small <b>EXP</b> tag by the filename marks any non-One35 file as experimental.</p>
         </section>
 
         <section>
@@ -511,6 +547,11 @@
         <section>
           <h3>Effects (tap “Effects”)</h3>
           <ul>
+            <li><b>Auto WB</b> — uses each photo's own camera white balance so warm/cool
+            scenes self-correct (on by default). Turn it off on a photo to keep the as-shot
+            warmth, or where the camera guessed wrong. It re-develops the photo, so it's the
+            one effect with a brief pause. Mainly affects One35 files. (Change the default for
+            new photos in <b>Settings</b>.)</li>
             <li><b>Push/Pull</b> — film push/pull processing simulation: positive values
             increase contrast and punch (pushed film), negative values soften and lift
             shadows (pulled film).</li>
@@ -580,9 +621,9 @@
             <li><b>JPEG</b> — 8-bit, great for sharing. Quality is adjustable in Settings.</li>
             <li><b>TIFF</b> — 16-bit, lossless, best for further editing in Lightroom etc.</li>
             <li><b>Full-resolution export</b> (Settings, off by default) renders at the
-            sensor's native size on desktop &amp; Android; iPhone always exports at an
-            optimized size to stay within memory. On iPhone, saving opens the share sheet —
-            pick <b>Save Image</b> or <b>Save to Files</b>; on desktop/Android it downloads.</li>
+            sensor's native size. On iPhone it renders in tiles to stay within memory, so
+            it's a bit slower but produces the same full-res result. Saving on iPhone opens
+            the share sheet — pick <b>Save Image</b> or <b>Save to Files</b>; on desktop/Android it downloads.</li>
             <li>With 2+ photos loaded, a <b>Batch Export</b> button appears. It develops
             every <i>included</i> photo — each with its own profile and adjustments —
             and saves them together in one share sheet. Long-press it to pick the batch
@@ -598,14 +639,16 @@
             <li><b>Export</b> — format (JPEG / TIFF) and quality for single and batch export separately.</li>
             <li><b>Stamp Color</b> — colour of the date/frame number stamp.</li>
             <li><b>Reduce motion</b> — disables animations. Also respects the system accessibility setting.</li>
-            <li><b>Full-resolution export</b> — render at the sensor's full native resolution (off by default). Turn on for full-size files on desktop &amp; Android; iPhone always exports at an optimized size.</li>
+            <li><b>Full-resolution export</b> — render at the sensor's full native resolution (off by default). On iPhone it renders in tiles to fit memory (a little slower, same result).</li>
+            <li><b>Auto WB on new photos</b> — whether new photos start with the Auto WB effect on. You can still flip it per photo.</li>
           </ul>
         </section>
 
         <section>
           <h3>Getting photos onto the phone</h3>
           <p>Connect the One35 v2 via USB-C, copy the DNGs into the Files app (or iCloud
-          Drive), then tap <b>Open</b>. Safari can't talk to the camera over USB directly.</p>
+          Drive), then tap <b>Open Files</b>. Safari can't talk to the camera over USB
+          directly. Photos already on your phone (other RAW or JPEG) open the same way.</p>
         </section>
 
         <section>
@@ -624,6 +667,21 @@
         </section>
 
         <p class="sheet-version" id="help-version"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Photo metadata sheet (opened by tapping the filename) -->
+  <div id="meta-sheet" class="sheet" role="dialog" aria-modal="true" aria-label="Photo info">
+    <div class="sheet-backdrop" data-close="meta-sheet"></div>
+    <div class="sheet-panel">
+      <div class="sheet-grip"></div>
+      <header class="sheet-head">
+        <h2>Photo info</h2>
+        <button class="sheet-close" data-close="meta-sheet" aria-label="Close">✕</button>
+      </header>
+      <div class="sheet-body">
+        <dl id="meta-list" class="meta-list"></dl>
       </div>
     </div>
   </div>
@@ -823,10 +881,20 @@
           <div class="settings-row">
             <div class="settings-label-group">
               <span class="settings-label">Full-resolution export</span>
-              <span class="settings-desc">Render at the sensor's native resolution (desktop &amp; Android). Turn off for faster, smaller exports. iPhone always exports at the optimized size — full size exceeds iOS memory limits.</span>
+              <span class="settings-desc">Render at the sensor's native resolution. Turn off for faster, smaller exports. On iPhone, full-res renders in tiles to stay within memory — a bit slower than the optimized size.</span>
             </div>
             <label class="settings-switch">
               <input type="checkbox" id="settings-full-res-export">
+              <span class="settings-switch-track"></span>
+            </label>
+          </div>
+          <div class="settings-row">
+            <div class="settings-label-group">
+              <span class="settings-label">Auto WB on new photos</span>
+              <span class="settings-desc">Start new photos with the Auto WB effect on (each photo's own camera white balance). Turn off to default to the fixed calibrated balance — you can still flip Auto WB per photo in the effects.</span>
+            </div>
+            <label class="settings-switch">
+              <input type="checkbox" id="settings-auto-wb-default">
               <span class="settings-switch-track"></span>
             </label>
           </div>
@@ -857,7 +925,7 @@
 <input
   type="file"
   id="file-input"
-  accept=".dng,.DNG,.tif,.tiff,.TIF,.TIFF"
+  accept=".dng,.tif,.tiff,.cr2,.cr3,.crw,.nef,.nrw,.arw,.sr2,.srf,.raf,.rw2,.orf,.pef,.srw,.dcr,.kdc,.mrw,.mos,.iiq,.3fr,.fff,.erf,.rwl,.gpr,.raw"
   multiple
   hidden
   aria-hidden="true"

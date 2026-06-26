@@ -179,6 +179,47 @@ export const LIBRAW_PREMUL = [1.272, 1.0, 1.103];
  */
 export const ASN_LIBRAW_CAL = [0.479, 1.0, 0.648];
 
+// ─── Generic (non-Flashback) RAW exposure anchoring ──────────────────────────
+// Faithful port of upstream's GENERIC_RAW_ANCHOR_EV + per-file residual.
+// libraw's generic develop lands ~2 stops BELOW the FM1 intermediate the render
+// expects, so every foreign RAW is re-anchored by this much; a per-file residual
+// then nudges per camera. NOTE: these are upstream's MEASURED values; we have no
+// foreign test files to re-verify, and foreign RAW is best-effort regardless
+// (the film looks are One35-calibrated). Live-tunable for calibration via
+// globalThis.__GENERIC_RAW_ANCHOR_EV.
+export const GENERIC_RAW_ANCHOR_EV = 2.0;
+
+// Tier 2: measured per-make residual (EV) on top of the anchor, for proprietary
+// raws that carry no embedded BaselineExposure. Upstream-measured 2026-06-17.
+export const GENERIC_BOOST_EV_BY_MAKE = {
+  'sony':                        -1.00,   // ARW
+  'fujifilm':                     0.00,   // RAF
+  'fuji':                         0.00,
+  'pentax':                       0.50,
+  'ricoh':                        0.50,
+  'ricoh imaging company, ltd.':  0.50,
+  'apple':                       -0.50,   // non-ProRAW iPhone raw
+};
+
+/**
+ * Total exposure boost (EV) for a generic RAW = anchor + per-file residual.
+ * Tier 1: embedded DNG BaselineExposure (most trustworthy) → Tier 2: measured
+ * per-make → Tier 3: 0 (lowest-risk default for unseen bodies). Mirrors
+ * upstream `_read_generic_raw_boost_ev`.
+ * @param {string|null} make  camera make
+ * @param {number|null} baselineExposure  embedded DNG BaselineExposure EV, or null
+ * @returns {number} EV to fold into the generic raw→ACEScg matrix
+ */
+export function genericRawBoostEv(make, baselineExposure) {
+  const anchor = globalThis.__GENERIC_RAW_ANCHOR_EV ?? GENERIC_RAW_ANCHOR_EV;
+  if (baselineExposure != null && Number.isFinite(baselineExposure)) {
+    return anchor + baselineExposure;                                  // Tier 1
+  }
+  const m = (make ?? '').trim().toLowerCase();
+  if (m && m in GENERIC_BOOST_EV_BY_MAKE) return anchor + GENERIC_BOOST_EV_BY_MAKE[m];  // Tier 2
+  return anchor;                                                       // Tier 3 (residual 0)
+}
+
 /**
  * Compute the fused raw→ACEScg CCM for a Flashback DNG from any FM1 matrix.
  * Equivalent to the precomputed FLASHBACK_CCM constant but accepts a dynamic
@@ -340,7 +381,7 @@ export const VIBE_PRESETS = {
     label:             'Disposable',
     enable_ca:         true,
     ca_strength:       0.0077,  // ca_pixels=8 @ half-size long_edge 2072: 8/(2072/2)=0.0077
-    softness:          0.30,
+    softness:          0.50,    // desktop-app parity (SOFTNESS-1)
     sharpness:         2.00,    // sharpness_pct=200 → 200/100=2.0
     sharpen_radius:    0.5,
     grain:             1.20,    // grain_pct=120 → 120/100=1.2

@@ -24,7 +24,7 @@
 
 import {
   isAvailable, loadShaderModule, createComputePipeline,
-  createF32Buffer, createUniformBuffer, createU32Uniform, runCompute, dispatchSize,
+  createF32Buffer, createEmptyBuffer, createUniformBuffer, createU32Uniform, runCompute, dispatchSize,
 } from './gpu.js';
 
 import {
@@ -94,6 +94,7 @@ export class Effects {
       vignette:     createComputePipeline(vig,        'main',          'fx-vignette'),
       halation:     createComputePipeline(hi,         'main_halation', 'fx-halation-mask'),
       bloomDown:    createComputePipeline(bloomSm,    'main_down',     'fx-bloom-down'),
+      bloomMask:    createComputePipeline(bloomSm,    'main_mask',     'fx-bloom-mask'),
       bloomUpadd:   createComputePipeline(bloomSm,    'main_upadd',    'fx-bloom-upadd'),
       desat:        createComputePipeline(hdesat,     'main',          'fx-highlight-desat'),
       gsample:      createComputePipeline(gsample,    'main',          'fx-grain-sample'),
@@ -308,10 +309,15 @@ export class Effects {
    * @param {number} [scale]    resolution ratio vs the preview (blur radii scale)
    * @returns {GPUBuffer}       buffer holding the result (may be src)
    */
-  applyPreLut(src, w, h, count, config, getBuf, scale = 1, appliedEv = 0) {
+  applyPreLut(src, w, h, count, config, getBuf, scale = 1, appliedEv = 0, region = null, bloomGlowSmall = null, halationGlowSmall = null) {
     if (!this._ready) return src;
     const c = config ?? {};
     const s = scale > 0 ? scale : 1;
+    // Tiled full-res export: when `src` is a horizontal strip, region carries the
+    // strip's global Y offset + the full frame height so position-dependent
+    // effects (vignette) centre on the whole image. null = untiled (defaults).
+    const yOff  = region?.yOffset ?? 0;
+    const fullH = region?.fullH ?? h;
     const px = dispatchSize(w * h, 64);
     const el = dispatchSize(count, 256);
     // Convert linear stops to ACEScct: (log2(0.18·2^stops) + 9.72) / 17.52
@@ -327,7 +333,25 @@ export class Effects {
     //    warmth + the scale weight + user strength baked in), blurs at a growing
     //    radius, and is summed onto the image. Wider scales use a higher
     //    threshold so only the brightest sources feed the broad halo.
-    if (c.enable_halation && (c.halation_strength ?? 0) > 0) {
+    if (c.enable_halation && (c.halation_strength ?? 0) > 0 && halationGlowSmall) {
+      // Tiled export: halation's blur reaches ~240px, too far to apron, so the
+      // caller pre-computes the whole-frame glow at 1/4 res (strength/warmth/tint
+      // already baked in) and we just upsample+add it here (region aligns the
+      // strip). Skips the per-strip multi-scale loop below.
+      const dst = (cur === A) ? B : A;
+      const uup = new ArrayBuffer(32);
+      new Uint32Array(uup).set([w, h, halationGlowSmall.w, halationGlowSmall.h]);
+      new Float32Array(uup, 16).set([1.0, yOff, fullH, 0]);
+      const uUp = createUniformBuffer(new Float32Array(uup));
+      runCompute(this._pipelines.bloomUpadd, [
+        { binding: 0, resource: { buffer: cur } },
+        { binding: 1, resource: { buffer: halationGlowSmall.buf } },
+        { binding: 2, resource: { buffer: dst } },
+        { binding: 3, resource: { buffer: uUp } },
+      ], px);
+      uUp.destroy();
+      cur = dst;
+    } else if (c.enable_halation && (c.halation_strength ?? 0) > 0) {
       const strength  = c.halation_strength;
       const warmthExp = Math.max(0, c.halation_warmth_pct ?? HALATION_WARMTH_PCT) / 100;
       // The signal reaching here is already lifted by `appliedEv` (base +2 EV
@@ -368,7 +392,7 @@ export class Effects {
     // 2. Vignette (in place, linear — cool periphery, no upper clamp)
     if (c.enable_vignette && (c.vignette_strength ?? 0) > 0) {
       const u = createUniformBuffer(new Float32Array([
-        w, h, c.vignette_strength, c.vignette_feather ?? 1.0, c.vignette_color_shift ?? 0.05, 0, 0, 0,
+        w, h, c.vignette_strength, c.vignette_feather ?? 1.0, c.vignette_color_shift ?? 0.05, yOff, fullH, 0,
       ]));
       runCompute(this._pipelines.vignette, [
         { binding: 0, resource: { buffer: cur } },
@@ -382,36 +406,43 @@ export class Effects {
     //    (sigma = max(2, max_dim/5) at small res ≈ 412px effective at full res),
     //    bilinear upsample + additive blend.
     if (c.enable_bloom && (c.bloom_strength ?? 0) > 0) {
-      const smallW = Math.max(1, Math.ceil(w / 4));
-      const smallH = Math.max(1, Math.ceil(h / 4));
-      const smallCount = smallW * smallH * 3;
-      const small = getBuf('bloomSmall', smallCount);
-      const tmp   = getBuf('tmp', Math.max(count, smallCount));
+      // Tiled export: the bloom source is whole-frame (σ ≈ frame/20), so it can't
+      // be aproned. The caller computes one GLOBAL masked+blurred small buffer and
+      // passes it as bloomGlowSmall; each strip just upsamples+adds it (with region
+      // so the strip lines up). Untiled: do the usual per-render down+blur.
+      let small, smallW, smallH;
+      if (bloomGlowSmall) {
+        small = bloomGlowSmall.buf; smallW = bloomGlowSmall.w; smallH = bloomGlowSmall.h;
+      } else {
+        smallW = Math.max(1, Math.ceil(w / 4));
+        smallH = Math.max(1, Math.ceil(h / 4));
+        const smallCount = smallW * smallH * 3;
+        small = getBuf('bloomSmall', smallCount);
+        const tmp = getBuf('tmp', Math.max(count, smallCount));
 
-      const bloomThr = acescctThr(c.bloom_threshold_stops ?? 3.0);
-      const ud = new ArrayBuffer(32);
-      new Uint32Array(ud).set([w, h, smallW, smallH]);
-      new Float32Array(ud, 16).set([bloomThr, 0, 0, 0]);
-      const uDown = createUniformBuffer(new Float32Array(ud));
+        const bloomThr = acescctThr(c.bloom_threshold_stops ?? 3.0);
+        const ud = new ArrayBuffer(32);
+        new Uint32Array(ud).set([w, h, smallW, smallH]);
+        new Float32Array(ud, 16).set([bloomThr, 0, 0, 0]);
+        const uDown = createUniformBuffer(new Float32Array(ud));
+        const downPx = dispatchSize(smallW * smallH, 64);
+        runCompute(this._pipelines.bloomDown, [
+          { binding: 0, resource: { buffer: cur } },
+          { binding: 1, resource: { buffer: small } },
+          { binding: 2, resource: { buffer: uDown } },
+        ], downPx);
+        uDown.destroy();
 
-      // Dispatch: one thread per output (small) pixel
-      const downPx = dispatchSize(smallW * smallH, 64);
-      runCompute(this._pipelines.bloomDown, [
-        { binding: 0, resource: { buffer: cur } },
-        { binding: 1, resource: { buffer: small } },
-        { binding: 2, resource: { buffer: uDown } },
-      ], downPx);
-      uDown.destroy();
+        const sigma = Math.max(2, Math.max(smallW, smallH) / 5);
+        this._blur(small, small, tmp, smallW, smallH, smallCount, sigma);
+      }
 
-      // Blur at adaptive sigma on the SMALL buffer
-      const sigma = Math.max(2, Math.max(smallW, smallH) / 5);
-      this._blur(small, small, tmp, smallW, smallH, smallCount, sigma);
-
-      // Upsample + additive blend back to full res
+      // Upsample + additive blend back to full res (region maps the strip into the
+      // global small buffer's Y space for tiled export; no-op when untiled).
       const dst = (cur === A) ? B : A;
       const uup = new ArrayBuffer(32);
       new Uint32Array(uup).set([w, h, smallW, smallH]);
-      new Float32Array(uup, 16).set([c.bloom_strength, 0, 0, 0]);
+      new Float32Array(uup, 16).set([c.bloom_strength, yOff, fullH, 0]);
       const uUp = createUniformBuffer(new Float32Array(uup));
       runCompute(this._pipelines.bloomUpadd, [
         { binding: 0, resource: { buffer: cur } },
@@ -434,6 +465,95 @@ export class Effects {
     return cur;
   }
 
+  /**
+   * Build the GLOBAL bloom source for the tiled full-res export: the ACEScct
+   * luma-threshold mask + the adaptive Gaussian blur, computed once on an
+   * already-1/4-res adjusted-linear copy of the WHOLE frame. The result is what
+   * applyPreLut() consumes as `bloomGlowSmall` (each strip upsamples + adds it).
+   * Mirrors the untiled bloom's mask + sigma so the two match.
+   * @param {GPUBuffer} adjustedSmall  1/4-res adjusted linear ACEScg (sw*sh*3)
+   * @param {GPUBuffer} out            destination glow buffer (sw*sh*3), caller-owned
+   * @param {GPUBuffer} tmp            scratch (sw*sh*3)
+   */
+  buildBloomGlowSmall(adjustedSmall, sw, sh, config, out, tmp) {
+    if (!this._ready) return;
+    const c = config ?? {};
+    const count = sw * sh * 3;
+    const acescctThr = (stops) => (Math.log2(0.18 * Math.pow(2, stops)) + 9.72) / 17.52;
+    const bloomThr = acescctThr(c.bloom_threshold_stops ?? 3.0);
+    // MaskU = { w:u32, h:u32, threshold:f32, _pad:f32 } (16 bytes)
+    const ub = new ArrayBuffer(16);
+    new Uint32Array(ub, 0, 2).set([sw, sh]);
+    new Float32Array(ub, 8, 2).set([bloomThr, 0]);
+    const uMask = createUniformBuffer(new Float32Array(ub));
+    runCompute(this._pipelines.bloomMask, [
+      { binding: 0, resource: { buffer: adjustedSmall } },
+      { binding: 1, resource: { buffer: out } },
+      { binding: 2, resource: { buffer: uMask } },
+    ], dispatchSize(sw * sh, 64));
+    uMask.destroy();
+    const sigma = Math.max(2, Math.max(sw, sh) / 5);
+    this._blur(out, out, tmp, sw, sh, count, sigma);
+  }
+
+  /**
+   * Build the GLOBAL halation glow for the tiled full-res export: the 3-scale
+   * tinted + blurred highlight glow (strength/warmth/tint baked in), computed
+   * once on a 1/4-res adjusted-linear frame. Each strip just upsamples + adds it
+   * (applyPreLut's halationGlowSmall), so halation's ~240px blur needs NO apron.
+   * Mirrors applyPreLut's halation at 1/4 the blur radius (the 4× upsample then
+   * matches the full-res spread). Visually identical since halation is heavily
+   * blurred — same rationale as the bloom pre-pass.
+   * @param {GPUBuffer} adjustedSmall  1/4-res adjusted linear ACEScg (sw*sh*3)
+   * @param {number} appliedEv  total EV already applied (scene-referred threshold)
+   * @param {number} scaleSmall  full export scale ÷4 (low-res blur radius factor)
+   * @returns {GPUBuffer|null} glow buffer (sw*sh*3), caller-owned, or null if off
+   */
+  buildHalationGlowSmall(adjustedSmall, sw, sh, config, appliedEv, scaleSmall) {
+    if (!this._ready) return null;
+    const c = config ?? {};
+    if (!c.enable_halation || (c.halation_strength ?? 0) <= 0) return null;
+    const count = sw * sh * 3;
+    const acescctThr = (stops) => (Math.log2(0.18 * Math.pow(2, stops)) + 9.72) / 17.52;
+    const strength  = c.halation_strength;
+    const warmthExp = Math.max(0, c.halation_warmth_pct ?? HALATION_WARMTH_PCT) / 100;
+    const baseThr   = acescctThr((c.halation_threshold_stops ?? 4.5) + appliedEv);
+    const baseR     = Math.max(0.25, (c.halation_blur_radius ?? 8) * scaleSmall);
+    const K         = 20.0;
+    const px = dispatchSize(sw * sh, 64);
+    const el = dispatchSize(count, 256);
+
+    const mask = createEmptyBuffer(count * 4, STORAGE_RW);
+    const tmp  = createEmptyBuffer(count * 4, STORAGE_RW);
+    const accA = createEmptyBuffer(count * 4, STORAGE_RW);   // zero-initialised
+    const accB = createEmptyBuffer(count * 4, STORAGE_RW);
+    let acc = accA;
+    for (const [radMult, thrOff, weight, gf, bf] of HALATION_SCALES) {
+      const ws = weight * strength;
+      const u = createUniformBuffer(new Float32Array([
+        sw, sh, Math.min(baseThr + thrOff, 0.98), 0,
+        ws, ws * Math.pow(gf, warmthExp), ws * Math.pow(bf, warmthExp), K,
+      ]));
+      runCompute(this._pipelines.halation, [
+        { binding: 0, resource: { buffer: adjustedSmall } },
+        { binding: 1, resource: { buffer: mask } },
+        { binding: 2, resource: { buffer: u } },
+      ], px);
+      u.destroy();
+      this._blur(mask, mask, tmp, sw, sh, count, Math.max(0.5, baseR * radMult));
+      const dst = (acc === accA) ? accB : accA;
+      runCompute(this._pipelines.add, [
+        { binding: 0, resource: { buffer: acc } },
+        { binding: 1, resource: { buffer: mask } },
+        { binding: 2, resource: { buffer: dst } },
+      ], el);
+      acc = dst;
+    }
+    mask.destroy(); tmp.destroy();
+    if (acc === accA) accB.destroy(); else accA.destroy();   // free the unused accumulator
+    return acc;
+  }
+
   // ── Live: post-LUT display-referred effect chain ──────────────────────────
   /**
    * @param {GPUBuffer} src     buffer holding display RGB (will not be destroyed)
@@ -445,10 +565,15 @@ export class Effects {
    *   down by it, so spatial effects look the same as the preview did.
    * @returns {GPUBuffer}       buffer holding the final result (may be src)
    */
-  applyLive(src, w, h, count, config, getBuf, scale = 1) {
+  applyLive(src, w, h, count, config, getBuf, scale = 1, region = null) {
     if (!this._ready) return src;
     const c = config ?? {};
     const s = scale > 0 ? scale : 1;
+    // Tiled full-res export: region carries the strip's global Y offset + full
+    // frame height so CA centres on the whole image and grain stays continuous
+    // across strips. null = untiled (defaults reproduce the single-pass render).
+    const yOff  = region?.yOffset ?? 0;
+    const fullH = region?.fullH ?? h;
     const px = dispatchSize(w * h, 64);
     const el = dispatchSize(count, 256);
 
@@ -461,7 +586,7 @@ export class Effects {
 
     // 1. Chromatic aberration
     if (c.enable_chromatic_aberration && (c.ca_strength ?? 0) > 0) {
-      const u = createUniformBuffer(new Float32Array([w, h, c.ca_strength, 0]));
+      const u = createUniformBuffer(new Float32Array([w, h, c.ca_strength, yOff, fullH, 0, 0, 0]));
       runCompute(this._pipelines.ca, [
         { binding: 0, resource: { buffer: cur } },
         { binding: 1, resource: { buffer: A } },
@@ -507,7 +632,7 @@ export class Effects {
       // Divide the tile scale by the resolution ratio so grain keeps the same
       // relative size at full-res export as it had in the preview.
       const us = createUniformBuffer(new Float32Array([
-        w, h, this._grainTile.w, this._grainTile.h, GRAIN_TILE_SCALE / s, 0, 0, 0,
+        w, h, this._grainTile.w, this._grainTile.h, GRAIN_TILE_SCALE / s, yOff, 0, 0,
       ]));
       runCompute(this._pipelines.gsample, [
         { binding: 0, resource: { buffer: this._grainTile.buf } },

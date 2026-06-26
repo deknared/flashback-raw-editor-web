@@ -32,6 +32,7 @@ const DEFAULTS = {
   stampColor:        'amber',
   defaultCrop:       'free',
   fullResExport:     false,
+  autoWbDefault:     true,
   reduceMotion:      false,
   theme:             'dark',
 };
@@ -147,6 +148,7 @@ export function initSettings(state, { onSettingsChange, onVibeOrderChange }) {
   wireCheck('settings-confirm-remove', 'confirmRemove');
   wireCheck('settings-auto-date',      'autoDateFromFile');
   wireCheck('settings-full-res-export', 'fullResExport');
+  wireCheck('settings-auto-wb-default', 'autoWbDefault');
   wireCheck('settings-reduce-motion',  'reduceMotion');
   wireCheck('settings-date-stamp',     'dateStamp');
   wireCheck('settings-frame-stamp',    'frameStamp');
@@ -218,6 +220,7 @@ export function initSettings(state, { onSettingsChange, onVibeOrderChange }) {
     syncCheck('settings-confirm-remove', s.confirmRemove);
     syncCheck('settings-auto-date',      s.autoDateFromFile);
   syncCheck('settings-full-res-export', s.fullResExport);
+    syncCheck('settings-auto-wb-default', s.autoWbDefault);
     syncCheck('settings-reduce-motion',  s.reduceMotion);
     syncCheck('settings-date-stamp',     s.dateStamp);
     syncCheck('settings-frame-stamp',    s.frameStamp);

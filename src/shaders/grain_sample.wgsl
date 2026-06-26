@@ -15,7 +15,11 @@ struct U {
     tile_w: f32,
     tile_h: f32,
     scale:  f32,
-    _p0:    f32,
+    // Tiled full-res export: dst may be a horizontal STRIP. y_offset is the
+    // strip's first row in the full frame so the grain tile indexes by GLOBAL
+    // position and the pattern is continuous across strips (no seam).
+    // Default (y_offset=0) reproduces the untiled render.
+    y_offset: f32,
     _p1:    f32,
     _p2:    f32,
 }
@@ -33,11 +37,12 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
 
     let x = pixel % W;
     let y = pixel / W;
+    let gy = f32(y) + u.y_offset;          // global row → continuous grain across strips
 
     let tw = u32(u.tile_w);
     let th = u32(u.tile_h);
     let sx = u32(f32(x) * u.scale) % tw;
-    let sy = u32(f32(y) * u.scale) % th;
+    let sy = u32(gy * u.scale) % th;
     let g  = tile[sy * tw + sx];
 
     let base = pixel * 3u;

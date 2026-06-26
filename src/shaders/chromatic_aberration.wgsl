@@ -10,7 +10,16 @@ struct U {
     width:    f32,
     height:   f32,
     strength: f32,   // = ca_pixels / (long_edge/2), e.g. 0.0077 for Disposable
-    _pad:     f32,
+    // Tiled full-res export: src/dst may be a horizontal STRIP. y_offset is the
+    // strip's first row in the full frame; full_height is the full frame height,
+    // so the radial centre is the WHOLE image. The radial math runs in GLOBAL
+    // coords; buffer reads convert back to the strip's local rows.
+    // Defaults (y_offset=0, full_height=height) reproduce the untiled render.
+    y_offset:    f32,
+    full_height: f32,
+    _p0:         f32,
+    _p1:         f32,
+    _p2:         f32,
 }
 
 @group(0) @binding(0) var<storage, read>       src: array<f32>;
@@ -44,12 +53,14 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     let pixel = id.y * 4194240u + id.x;
     if pixel >= W * H { return; }
 
-    let x = f32(pixel % W);
-    let y = f32(pixel / W);
-    let cx = u.width  * 0.5;
-    let cy = u.height * 0.5;
-    let dx = x - cx;
-    let dy = y - cy;
+    let x  = f32(pixel % W);              // local x == global x (full width)
+    let ly = f32(pixel / W);             // local row within this strip buffer
+    let fullH = max(u.full_height, u.height);
+    let gy = ly + u.y_offset;            // global row in the full frame
+    let cx = u.width * 0.5;
+    let cy = fullH   * 0.5;              // radial centre of the WHOLE frame
+    let dx = x  - cx;
+    let dy = gy - cy;
 
     // 8 spectral samples across t ∈ [0,1]. Band weight σ=0.25 → 1/(2σ²)=8.
     var acc  = vec3f(0.0);
@@ -63,7 +74,9 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
         // Reciprocal magnification: t=0 red stays fixed, t=1 blue shrinks
         // inward at source → content displaced outward (blue fringe on periphery).
         let sc = 1.0 / (1.0 + u.strength * t);
-        let s  = sample_rgb(cx + dx * sc, cy + dy * sc, W, H);
+        // Sample at the GLOBAL position, then convert the row back to this
+        // strip's local space (subtract y_offset) for the buffer read.
+        let s  = sample_rgb(cx + dx * sc, (cy + dy * sc) - u.y_offset, W, H);
         acc  += s * w;
         wsum += w;
     }

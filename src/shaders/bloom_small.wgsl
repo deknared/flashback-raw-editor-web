@@ -71,6 +71,36 @@ fn main_down(@builtin(global_invocation_id) id: vec3u) {
     dst_down[di + 2u] = px.b * mask;
 }
 
+// ── Mask (no downsample) ────────────────────────────────────────────────────────
+// For the TILED full-res export the bloom source is already a 1/4-res copy of the
+// whole frame, so we only need the ACEScct luma threshold mask here (no 4× box).
+// Mirrors main_down's mask math exactly so tiled bloom matches the untiled path.
+
+struct MaskU {
+    w:         u32,
+    h:         u32,
+    threshold: f32,
+    _pad:      f32,
+}
+
+@group(0) @binding(0) var<storage, read>       src_mask: array<f32>;
+@group(0) @binding(1) var<storage, read_write> dst_mask: array<f32>;
+@group(0) @binding(2) var<uniform>             um:       MaskU;
+
+@compute @workgroup_size(64)
+fn main_mask(@builtin(global_invocation_id) id: vec3u) {
+    let pixel = id.y * 4194240u + id.x;
+    if pixel >= um.w * um.h { return; }
+    let i = pixel * 3u;
+    let px = vec3f(src_mask[i], src_mask[i + 1u], src_mask[i + 2u]);
+    let lum_log = acescct_enc(luma_ap1(px.r, px.g, px.b));
+    let denom   = max(0.001, 1.0 - um.threshold);
+    let mask    = clamp((lum_log - um.threshold) / denom, 0.0, 1.0);
+    dst_mask[i]      = px.r * mask;
+    dst_mask[i + 1u] = px.g * mask;
+    dst_mask[i + 2u] = px.b * mask;
+}
+
 // ── Up + Add ──────────────────────────────────────────────────────────────────
 
 struct UpU {
@@ -79,9 +109,14 @@ struct UpU {
     src_w:    u32,
     src_h:    u32,
     strength: f32,
-    _pad0:    f32,
-    _pad1:    f32,
-    _pad2:    f32,
+    // Tiled full-res export: the base (dst) may be a horizontal STRIP while the
+    // small bloom buffer is GLOBAL (the whole frame at 1/4). y_offset is the
+    // strip's first row and full_dst_h the full frame height, so the upsample
+    // maps each strip row to the right place in the global small buffer.
+    // Defaults (y_offset=0, full_dst_h=0 → falls back to dst_h) = untiled.
+    y_offset:   f32,
+    full_dst_h: f32,
+    _pad2:      f32,
 }
 
 @group(0) @binding(0) var<storage, read>       base_up:  array<f32>;
@@ -115,10 +150,13 @@ fn main_upadd(@builtin(global_invocation_id) id: vec3u) {
     if pixel >= uu.dst_w * uu.dst_h { return; }
 
     let dx = f32(pixel % uu.dst_w);
-    let dy = f32(pixel / uu.dst_w);
-    // Map full-res pixel to small-buffer coordinate (bilinear).
+    let dyLocal = f32(pixel / uu.dst_w);
+    let gy = dyLocal + uu.y_offset;                 // global dst row
+    let fullDstH = max(uu.full_dst_h, f32(uu.dst_h));
+    // Map full-res pixel to small-buffer coordinate (bilinear). Y maps through
+    // the FULL frame height so a strip lines up with the global small buffer.
     let sx = (dx + 0.5) * (f32(uu.src_w) / f32(uu.dst_w)) - 0.5;
-    let sy = (dy + 0.5) * (f32(uu.src_h) / f32(uu.dst_h)) - 0.5;
+    let sy = (gy + 0.5) * (f32(uu.src_h) / fullDstH) - 0.5;
     let bloom = sample_small(sx, sy) * uu.strength;
 
     let bi = pixel * 3u;
