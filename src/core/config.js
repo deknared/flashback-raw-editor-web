@@ -220,6 +220,46 @@ export function genericRawBoostEv(make, baselineExposure) {
   return anchor;                                                       // Tier 3 (residual 0)
 }
 
+// ─── Generic-RAW daylight white balance (replicates the desktop) ─────────────
+// libraw develops a generic raw at the camera's DAYLIGHT white balance (its
+// pre_mul) — daylight-balanced, NOT the as-shot/auto WB (which is wrong for the
+// analog look). The desktop then nudges that daylight point from D65 to
+// Flashback's BASE_KELVIN so foreign raws land at the same neutral as One35
+// shots. Upstream shifts the Bayer WB before develop; we apply the equivalent
+// fixed per-channel gain in ACEScg, which keeps it to a single decode.
+export const BASE_KELVIN = 5500.0;          // Flashback neutral anchor
+export const GENERIC_DAYLIGHT_K = 6504.0;   // CIE D65 — libraw's daylight ref
+
+/** CIE daylight-series chromaticity for a CCT (4000–25000 K) → XYZ (Y=1). */
+function _planckianXyz(cct) {
+  const T = cct, T2 = T * T, T3 = T2 * T;
+  const x = T <= 7000
+    ? -4.6070e9 / T3 + 2.9678e6 / T2 + 0.09911e3 / T + 0.244063
+    : -2.0064e9 / T3 + 1.9018e6 / T2 + 0.24748e3 / T + 0.237040;
+  const y = -3.000 * x * x + 2.870 * x - 0.275;
+  return [x / y, 1.0, (1 - x - y) / y];
+}
+
+function _mat3vec(m, v) {
+  return [
+    m[0] * v[0] + m[1] * v[1] + m[2] * v[2],
+    m[3] * v[0] + m[4] * v[1] + m[5] * v[2],
+    m[6] * v[0] + m[7] * v[1] + m[8] * v[2],
+  ];
+}
+
+/**
+ * Per-channel ACEScg gain that shifts the white point from D65 (libraw's daylight)
+ * to BASE_KELVIN. Computed once; multiplied into the generic raw→ACEScg matrix's
+ * output rows. Mirrors upstream `_kelvin_to_acescg_gain(GENERIC_DAYLIGHT_K)`.
+ */
+export const GENERIC_KELVIN_ACESCG_GAIN = (() => {
+  const base   = _mat3vec(XYZ_D60_TO_ACESCG, _planckianXyz(BASE_KELVIN));
+  const target = _mat3vec(XYZ_D60_TO_ACESCG, _planckianXyz(GENERIC_DAYLIGHT_K));
+  const g = [base[0] / target[0], base[1] / target[1], base[2] / target[2]];
+  return [g[0] / g[1], 1.0, g[2] / g[1]];   // G normalized to 1
+})();
+
 /**
  * Compute the fused raw→ACEScg CCM for a Flashback DNG from any FM1 matrix.
  * Equivalent to the precomputed FLASHBACK_CCM constant but accepts a dynamic

@@ -1886,6 +1886,13 @@ async function selectPhoto(i) {
   markActiveThumb();
   updateLookToolsUI();   // Apply visibility depends on whether current ≠ copy source
 
+  // New photo identity → bump the render generation and cancel any pending idle
+  // render, so a render/cache-write started for the previous photo can't land on
+  // (or corrupt the preview cache of) this one. Fixes grey/black flashes and the
+  // back-and-forth when a profile change or rotation follows a switch.
+  _renderGen++;
+  clearTimeout(_idleTimer);
+
   // Stamp a token so background loads from a previous navigation are discarded
   // if the user taps another photo before they finish.
   const navToken = ++_navToken;
@@ -2499,9 +2506,17 @@ function updateLookToolsUI() {
   const canUndo = state._histIdx > 0;
   const canRedo = state._histIdx >= 0 && state._histIdx < state._history.length - 1;
   const show = (id, on) => $(id)?.classList.toggle('hidden', !on);
-  // The row appears with 2+ photos (copy/paste tools) OR when there's undo/redo
-  // history (so undo works on a single photo too).
-  $('look-tools-row')?.classList.toggle('hidden', !(multi || canUndo || canRedo));
+  // Undo/Redo placement: with 2+ photos they sit on the look-tools row beside
+  // Copy/Select; with a single photo that row would be a thick empty bar, so put
+  // them on the filename row instead (right side, where the photo count would be).
+  const right = $('look-tools-right');
+  if (right) {
+    const target = multi ? $('look-tools-row') : $('file-info');
+    if (target && right.parentElement !== target) target.appendChild(right);
+  }
+  // The look-tools row only appears with 2+ photos now (single-photo undo lives
+  // on the filename row).
+  $('look-tools-row')?.classList.toggle('hidden', !multi);
   // Apply only shows when there's a real target that ISN'T the source: in select
   // mode, a selected non-source photo; otherwise the current photo ≠ source. When
   // you're sitting on the source, only "Apply all" shows — nudging you to pick
@@ -2938,9 +2953,12 @@ export function showToast(msg, duration = 2500, isError = false) {
 let _renderQueued  = false;
 let _renderInFlight = false;
 let _idleTimer     = null;
+let _renderGen     = 0;   // bumped on photo switch; stale renders/cache-writes are dropped
 
 function triggerRender(interactive = true) {
   if (!state._processor || !state.processorReady || !state.hasImage) return;
+
+  const gen = _renderGen;   // snapshot: discard this frame if the photo changes
 
   if (!_renderQueued && !_renderInFlight) {
     _renderQueued = true;
@@ -2949,7 +2967,7 @@ function triggerRender(interactive = true) {
       _renderInFlight = true;
       try {
         const img = await state._processor.renderPreview({ downscale: interactive });
-        if (img) await drawToCanvas(img, { interactive });
+        if (img && gen === _renderGen) await drawToCanvas(img, { interactive });
       } catch (err) {
         console.error('[app] render error:', err);
       } finally {
@@ -2962,12 +2980,15 @@ function triggerRender(interactive = true) {
   clearTimeout(_idleTimer);
   _idleTimer = setTimeout(async () => {
     if (!state.hasImage) return;
+    const idleGen = _renderGen;
     // Self-heal: if rAF never fired (tab backgrounded/throttled), the queued
     // flag would otherwise stay stuck and block all future interactive renders.
     _renderQueued = false;
     try {
       const img = await state._processor.renderPreview({ downscale: false });
-      if (img) {
+      // Only draw/cache if we're still on the same photo — otherwise a late
+      // render for the previous photo would flash or poison its preview cache.
+      if (img && idleGen === _renderGen) {
         await drawToCanvas(img);
         _previewCachePut(state._current, img);  // cache after every idle full-res render
       }

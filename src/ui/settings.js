@@ -32,7 +32,7 @@ const DEFAULTS = {
   stampColor:        'amber',
   defaultCrop:       'free',
   fullResExport:     false,
-  autoWbDefault:     true,
+  autoWbDefault:     false,
   reduceMotion:      false,
   theme:             'dark',
 };
@@ -48,6 +48,17 @@ export function loadSettings() {
     if (missing.length) merged.vibeOrder = [...merged.vibeOrder, ...missing];
     // Drop vibes that no longer exist
     merged.vibeOrder = merged.vibeOrder.filter(id => VIBE_PRESETS[id]);
+    // One-time (1.3.1): force "Auto WB on new photos" OFF for everyone — including
+    // users who got the v1.3.0 default of ON — to match the daylight-balanced
+    // philosophy. Runs once; any later manual change is respected.
+    const MIG_AUTOWB_OFF = `${STORAGE_KEY}:autowb-off-131`;
+    if (!localStorage.getItem(MIG_AUTOWB_OFF)) {
+      merged.autoWbDefault = false;
+      try {
+        localStorage.setItem(MIG_AUTOWB_OFF, '1');
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+      } catch {}
+    }
     return merged;
   } catch {
     return { ...DEFAULTS };

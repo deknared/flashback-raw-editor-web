@@ -21,7 +21,7 @@ import {
   LINSRGB_TO_ACESCG, SENSOR_BLACK,
   FLASHBACK_EXPOSURE_COMP_EV, LIBRAW_PREMUL,
   ASN_D50, ASN_LIBRAW_CAL, FM1, FM1_WB_TO_ACESCG, computeFlashbackCCM,
-  genericRawBoostEv,
+  genericRawBoostEv, GENERIC_KELVIN_ACESCG_GAIN,
 } from './config.js';
 import { decodeOne35HalfSize, decodeOne35Full } from './one35-dng.js';
 
@@ -506,8 +506,14 @@ export class RawDecoder {
             useCameraMatrix: 0,
           }
         : {
-            userQual:     opts.fast ? 0 : 3,
-            useCameraWb:  true,
+            // Faster linear demosaic for the half-size preview (generic raws are
+            // big and AHD is slow); full-quality AHD only at full-res export.
+            userQual:     (opts.fast || halfSize) ? 0 : 3,
+            // DAYLIGHT white balance (libraw's pre_mul), NOT camera/auto WB — a
+            // daylight-balanced feel is part of the analog look. The D65 →
+            // BASE_KELVIN nudge to Flashback's neutral is folded into the matrix.
+            useCameraWb:  false,
+            useAutoWb:    false,
             halfSize,
             noAutoBright: true,
             bright:       1,
@@ -572,13 +578,14 @@ export class RawDecoder {
         // Always use the hardcoded calibrated FM1 (see A1 finding above).
         ccm = computeFlashbackCCM(FM1, FLASHBACK_EXPOSURE_COMP_EV, premul, aceR, aceB);
       } else {
-        // Generic (foreign) RAW: re-anchor libraw's generic develop to the level
-        // the render expects, plus a per-file residual (embedded BaselineExposure
-        // → per-make table → 0). Folded into the matrix as a pure linear scale.
+        // Generic (foreign) RAW: the image is developed at the camera's daylight
+        // WB. Fold into the raw→ACEScg matrix: (1) the D65→BASE_KELVIN per-channel
+        // gain so it lands at Flashback's neutral, and (2) the exposure anchor
+        // (re-anchor libraw's level + per-file BaselineExposure / per-make boost).
         const make = sniffed.make ?? meta?.camera_make ?? meta?.make ?? null;
-        const boostEv = genericRawBoostEv(make, sniffed.baselineExposure);
-        const gk = Math.pow(2, boostEv);
-        ccm = gk === 1 ? LINSRGB_TO_ACESCG : LINSRGB_TO_ACESCG.map((v) => v * gk);
+        const gk = Math.pow(2, genericRawBoostEv(make, sniffed.baselineExposure));
+        const kg = GENERIC_KELVIN_ACESCG_GAIN;
+        ccm = LINSRGB_TO_ACESCG.map((v, idx) => v * gk * kg[Math.floor(idx / 3)]);
       }
 
       const asn = isFlashback ? sniffed.asn : null;   // metadata only; not used for colour
