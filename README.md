@@ -258,6 +258,25 @@ Contributions, issues, and forks are welcome under the terms of the GPL-3.0 lice
 
 ## Changelog
 
+### 1.3.1
+
+**Daylight-balanced foreign RAW** — generic (non-One35) raws now develop at the camera's
+*daylight* white balance (libraw's `pre_mul`), nudged from D65 to `BASE_KELVIN` (5500 K) so
+they land at Flashback's neutral — matching the desktop's daylight philosophy instead of the
+as-shot/auto WB. Import is also much faster: the preview uses the fast linear demosaic, with
+high-quality AHD only at full-res export. Still experimental.
+
+**Auto WB off by default** — a daylight feel is part of the analog look, so One35 photos start
+with their fixed calibrated balance. A one-time migration turns it off for existing users too;
+flip it on per photo, or change the default in Settings.
+
+**Smoother photo switching** — a render generation token discards renders and preview-cache
+writes that started for the previous photo, fixing the grey/black flashes and back-and-forth
+when switching (especially with a profile change or rotation just after).
+
+**Tidier Undo/Redo** — they sit on the filename row when a single photo is open, and on the
+look-tools row beside Copy/Select with two or more.
+
 ### 1.3.0
 
 **Open more than DNG** — import other RAW formats (CR2/CR3, NEF, ARW, RAF, RW2, ORF and
