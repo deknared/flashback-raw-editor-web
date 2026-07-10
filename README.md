@@ -258,6 +258,15 @@ Contributions, issues, and forks are welcome under the terms of the GPL-3.0 lice
 
 ## Changelog
 
+### 1.3.2
+
+**Vignette follows your crop** — the vignette used to be rendered on the full sensor frame,
+so cropping or straightening cut a window out of an already-vignetted image and the falloff
+stayed centred on the original frame (thanks for the report!). The vignette's radial field is
+now mapped through the crop + straighten transform, so it centres on the final frame you see —
+in the preview, JPEG, and TIFF alike. (Chromatic aberration intentionally stays frame-centred:
+it models the physical lens, which doesn't move when you crop.)
+
 ### 1.3.1
 
 **Daylight-balanced foreign RAW** — generic (non-One35) raws now develop at the camera's

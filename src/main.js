@@ -2045,7 +2045,11 @@ const PREVIEW_CACHE_MAX = 3;       // ≈ 38 MB of ImageData — safe alongside 
 
 function _previewKey() {
   const a = state.adjust;
-  return `${state.activeVibe}|${(a.exposure_ev ?? 0).toFixed(3)}|${(a.wb_temp ?? 0).toFixed(0)}|${(a.tint ?? 0).toFixed(0)}|${(a.push_pull_ev ?? 0).toFixed(3)}`;
+  // Crop is part of the key: the vignette is rendered against it, so a cached
+  // preview from a different crop would carry the wrong falloff.
+  const c = state.crop ?? {};
+  return `${state.activeVibe}|${(a.exposure_ev ?? 0).toFixed(3)}|${(a.wb_temp ?? 0).toFixed(0)}|${(a.tint ?? 0).toFixed(0)}|${(a.push_pull_ev ?? 0).toFixed(3)}` +
+         `|${c.angle ?? 0}|${(c.x ?? 0).toFixed(4)}|${(c.y ?? 0).toFixed(4)}|${(c.w ?? 1).toFixed(4)}|${(c.h ?? 1).toFixed(4)}`;
 }
 function _previewCachePut(i, imageData) {
   if (typeof i !== 'number' || !imageData) return;
@@ -2328,7 +2332,11 @@ const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent)
  * Both fall back to the resident render on failure.
  */
 function renderForExport(opts = {}) {
-  if (state._processor) state._processor.cameraWb = state.autoWb;   // export this photo's WB
+  if (state._processor) {
+    state._processor.cameraWb = state.autoWb;   // export this photo's WB
+    // …and this photo's crop, so the exported vignette matches the preview.
+    state._processor.cropRect = isCropDefault(state.crop) ? null : { ...state.crop };
+  }
   const wantFull = state.settings?.fullResExport ?? false;
   if (!wantFull) return state._processor.renderExport(opts);
   return IS_IOS
@@ -2957,6 +2965,10 @@ let _renderGen     = 0;   // bumped on photo switch; stale renders/cache-writes 
 
 function triggerRender(interactive = true) {
   if (!state._processor || !state.processorReady || !state.hasImage) return;
+
+  // Vignette follows the committed crop — keep the processor's copy current
+  // (triggerRender is the single gateway for every preview render).
+  state._processor.cropRect = isCropDefault(state.crop) ? null : { ...state.crop };
 
   const gen = _renderGen;   // snapshot: discard this frame if the photo changes
 

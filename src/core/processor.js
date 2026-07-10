@@ -66,6 +66,9 @@ export class FlashbackProcessor {
     this._isPhoto = false;
     /** Camera (per-file) white balance for One35 decodes; set from settings. */
     this.cameraWb = false;
+    /** Current photo's crop+straighten {angle,x,y,w,h} (normalised) or null —
+     *  the vignette follows it so the falloff lands on the final cropped frame. */
+    this.cropRect = null;
     /** Reverse-AE gain (t_ref / exposure) for the loaded photo; 1 = none. */
     this._revGain = 1;
     /** EXIF capture date string of the loaded photo (for the date stamp). */
@@ -731,6 +734,8 @@ export class FlashbackProcessor {
         opts.region ?? null,
         opts.bloomGlowSmall ?? null,
         opts.halationGlowSmall ?? null,
+        // The user's crop, so the vignette follows the final frame.
+        this.cropRect,
       );
     }
 

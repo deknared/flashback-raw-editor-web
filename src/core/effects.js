@@ -309,7 +309,7 @@ export class Effects {
    * @param {number} [scale]    resolution ratio vs the preview (blur radii scale)
    * @returns {GPUBuffer}       buffer holding the result (may be src)
    */
-  applyPreLut(src, w, h, count, config, getBuf, scale = 1, appliedEv = 0, region = null, bloomGlowSmall = null, halationGlowSmall = null) {
+  applyPreLut(src, w, h, count, config, getBuf, scale = 1, appliedEv = 0, region = null, bloomGlowSmall = null, halationGlowSmall = null, crop = null) {
     if (!this._ready) return src;
     const c = config ?? {};
     const s = scale > 0 ? scale : 1;
@@ -389,10 +389,20 @@ export class Effects {
       }
     }
 
-    // 2. Vignette (in place, linear — cool periphery, no upper clamp)
+    // 2. Vignette (in place, linear — cool periphery, no upper clamp). It follows
+    //    the user's crop + straighten: `crop` is the normalised {angle,x,y,w,h}
+    //    (null = full frame), mapped in the shader so the falloff centres on the
+    //    FINAL frame, not the uncropped sensor frame.
     if (c.enable_vignette && (c.vignette_strength ?? 0) > 0) {
+      const rad = ((crop?.angle ?? 0) * Math.PI) / 180;
+      const cov = Math.abs(Math.cos(rad)) +
+        Math.max(fullH / w, w / fullH) * Math.abs(Math.sin(rad));   // cover scale (see main.js coverScale)
+      const cw2 = (crop?.w ?? 1) / 2, ch2 = (crop?.h ?? 1) / 2;
       const u = createUniformBuffer(new Float32Array([
-        w, h, c.vignette_strength, c.vignette_feather ?? 1.0, c.vignette_color_shift ?? 0.05, yOff, fullH, 0,
+        w, h, c.vignette_strength, c.vignette_feather ?? 1.0, c.vignette_color_shift ?? 0.05, yOff, fullH,
+        Math.cos(rad), Math.sin(rad), cov,
+        (crop?.x ?? 0) + cw2, (crop?.y ?? 0) + ch2, Math.max(cw2, 1e-4), Math.max(ch2, 1e-4),
+        0, 0,
       ]));
       runCompute(this._pipelines.vignette, [
         { binding: 0, resource: { buffer: cur } },

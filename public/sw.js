@@ -10,7 +10,7 @@
 // Bumping CACHE_NAME changes this file's bytes, which makes the browser detect
 // an updated worker, install it, and purge older caches in `activate`. Bump it
 // whenever the precache list or strategy changes.
-const CACHE_NAME = 'flashback-v41';  // v41: v1.3.1 — generic-RAW daylight WB + faster import, Auto WB off by default, smoother switching, undo/redo placement
+const CACHE_NAME = 'flashback-v42';  // v42: v1.3.2 — vignette follows crop + straighten
 
 // Files to pre-cache on install (app shell).
 const PRECACHE = [
