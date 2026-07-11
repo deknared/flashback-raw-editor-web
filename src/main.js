@@ -3172,7 +3172,11 @@ function coverScale(rad, W, H) {
 // crop rect is the same for every frame; use the decoded dims when available,
 // else the native sensor ratio (so it's correct even before the first decode).
 const ONE35_ASPECT = 4144 / 3088;
-const DEFAULT_CROP_ASPECTS = { '3:2': 1.5, '4:3': 4 / 3, '1:1': 1, '16:9': 16 / 9 };
+// Aspect (w/h) for each default-crop option. Mirrors the crop editor's ratios so
+// the two pickers match. defaultCropRect() handles both landscape and portrait.
+const DEFAULT_CROP_ASPECTS = {
+  '1:1': 1, '4:3': 4 / 3, '3:4': 3 / 4, '3:2': 1.5, '2:3': 2 / 3, '16:9': 16 / 9,
+};
 function defaultCropRect() {
   const A = DEFAULT_CROP_ASPECTS[state.settings?.defaultCrop];
   if (!A) return { angle: 0, x: 0, y: 0, w: 1, h: 1 };   // 'free' / unset → full frame

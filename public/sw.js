@@ -10,7 +10,7 @@
 // Bumping CACHE_NAME changes this file's bytes, which makes the browser detect
 // an updated worker, install it, and purge older caches in `activate`. Bump it
 // whenever the precache list or strategy changes.
-const CACHE_NAME = 'flashback-v42';  // v42: v1.3.2 — vignette follows crop + straighten
+const CACHE_NAME = 'flashback-v43';  // v43: v1.3.3 — matching crop ratios (16:9 in the crop tool + full set in Default Crop)
 
 // Files to pre-cache on install (app shell).
 const PRECACHE = [

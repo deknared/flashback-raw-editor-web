@@ -414,6 +414,7 @@
         <button data-aspect="0.75">3:4</button>
         <button data-aspect="1.5">3:2</button>
         <button data-aspect="0.6667">2:3</button>
+        <button data-aspect="1.7778">16:9</button>
       </div>
       <div id="crop-straighten">
         <span class="crop-st-label">STRAIGHTEN</span>
@@ -441,7 +442,11 @@
       </header>
       <div class="sheet-body">
         <section>
-          <h3>1.3.2</h3>
+          <h3>1.3.3</h3>
+          <ul>
+            <li><b>Matching crop ratios</b> — the crop tool now includes 16:9, and the Default Crop setting offers the same full set (1:1, 4:3, 3:4, 3:2, 2:3, 16:9).</li>
+          </ul>
+          <h3 style="margin-top:16px">In 1.3.2</h3>
           <ul>
             <li><b>Vignette follows your crop</b> — the vignette (and its cool periphery) now centres on the cropped, straightened frame instead of the original sensor frame, in the preview and both export formats.</li>
           </ul>
@@ -859,9 +864,11 @@
           <h3 class="settings-section-title">Default Crop</h3>
           <div class="seg-toggle settings-seg-full" id="settings-default-crop" role="group" aria-label="Default crop aspect">
             <button type="button" data-crop="free"  class="active" aria-pressed="true">Free</button>
-            <button type="button" data-crop="3:2"   aria-pressed="false">3:2</button>
-            <button type="button" data-crop="4:3"   aria-pressed="false">4:3</button>
             <button type="button" data-crop="1:1"   aria-pressed="false">1:1</button>
+            <button type="button" data-crop="4:3"   aria-pressed="false">4:3</button>
+            <button type="button" data-crop="3:4"   aria-pressed="false">3:4</button>
+            <button type="button" data-crop="3:2"   aria-pressed="false">3:2</button>
+            <button type="button" data-crop="2:3"   aria-pressed="false">2:3</button>
             <button type="button" data-crop="16:9"  aria-pressed="false">16:9</button>
           </div>
         </section>

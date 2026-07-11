@@ -1971,6 +1971,9 @@ body.zen #controls {
 
 .settings-seg-full { width: 100%; margin-top: 4px; }
 .settings-seg-full button { flex: 1; }
+/* Default-crop has 7 options — let them shrink to fit the row (the 56px seg
+   min-width would otherwise overflow and clip on narrow screens). */
+#settings-default-crop button { min-width: 0; padding: 0 4px; font-size: 11px; }
 
 /* iOS-style toggle switch */
 .settings-switch {

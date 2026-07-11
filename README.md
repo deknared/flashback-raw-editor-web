@@ -258,6 +258,12 @@ Contributions, issues, and forks are welcome under the terms of the GPL-3.0 lice
 
 ## Changelog
 
+### 1.3.3
+
+**Matching crop ratios** — the crop tool was missing 16:9, and the Settings → Default Crop
+picker offered a different set of ratios. Both now share the same options: 1:1, 4:3, 3:4,
+3:2, 2:3, and 16:9.
+
 ### 1.3.2
 
 **Vignette follows your crop** — the vignette used to be rendered on the full sensor frame,
