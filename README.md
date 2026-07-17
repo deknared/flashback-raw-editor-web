@@ -88,11 +88,20 @@ presets and auto cover-scaling. Date and frame-number stamps styled like a 2000s
 date-back. A histogram, before/after compare (just press and hold), pinch-to-zoom that
 stays in the photo, rotate, and a distraction-free zen mode.
 
+### Open more than DNG
+Since 1.3.0: other RAW formats (CR2/CR3, NEF, ARW, RAF, RW2, ORF and more) and JPEG/PNG
+import too, with the full looks & effects applied — experimental, since the looks are
+calibrated for the One35 sensor. A per-photo **Auto WB** effect develops with each file's
+own camera white balance (off by default — a daylight-balanced feel is part of the analog
+look). Plus per-photo **undo/redo**, **clipping warnings** on the histogram, and a
+**photo info** sheet (tap the filename).
+
 ### Export, or just install it and forget it
-JPEG (8-bit) or 16-bit TIFF. **Full-resolution export** is an opt-in setting (desktop &
-Android; iPhone exports at an optimized size to stay within memory). The app tells you
-when an update is ready, and shows a "What's new" summary after each one. Install it once
-and it runs **fully offline** forever after — your photos never leave the device, period.
+JPEG (8-bit) or 16-bit TIFF. **Full-resolution export** is an opt-in setting — on iPhone
+it renders in tiles to stay within iOS memory (a little slower, same full-res result).
+The app tells you when an update is ready, and shows a "What's new" summary after each
+one. Install it once and it runs **fully offline** forever after — your photos never
+leave the device, period.
 
 ## Install on iPhone
 
@@ -114,11 +123,15 @@ npm run preview    # serve the production build locally
 ```
 
 Notes:
-- The dev server sets COOP/COEP headers (cross-origin isolation) for libraw-wasm's
-  SharedArrayBuffer. The same headers are applied in production via `public/_headers`.
+- No COOP/COEP headers in dev or production: the libraw worker runs as a plain Web
+  Worker (no SharedArrayBuffer), and COOP breaks iOS standalone PWA launch.
 - `vite.config.js` excludes `libraw-wasm` from dep-optimization (its internal worker +
   wasm URLs must resolve relative to the package) and injects a build stamp (`__BUILD_ID__`)
   shown on the front page so you can confirm a deploy synced.
+- `libraw-wasm` is **pinned to 1.1.2 on purpose** — the colour calibration (e.g.
+  `LIBRAW_PREMUL`, the per-channel decode corrections) was measured against this exact
+  version's output. Upgrading changes decode results and breaks the desktop colour match;
+  re-calibrate against reference exports before ever bumping it.
 
 ## Deploy
 
@@ -257,6 +270,15 @@ FOR A PARTICULAR PURPOSE. See the GNU General Public License for details.
 Contributions, issues, and forks are welcome under the terms of the GPL-3.0 license above.
 
 ## Changelog
+
+### 1.3.4
+
+**Health-audit cleanup** — removed dead code (an orphaned highlight-desaturation shader and
+unused pipeline entry points; slightly smaller bundle), aligned the dev server's headers with
+production (no COOP/COEP anywhere — the libraw worker doesn't need SharedArrayBuffer), bumped
+the build's Node version off EOL 20 to 22 LTS, documented the deliberate `libraw-wasm` 1.1.2
+pin, and fixed stale README claims (iPhone full-resolution export has worked since 1.3.0).
+No rendering changes.
 
 ### 1.3.3
 

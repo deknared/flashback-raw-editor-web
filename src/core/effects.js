@@ -13,10 +13,6 @@
  *       Post-LUT, display-referred chain (CA → softness → sharpen → grain).
  *       Returns the GPUBuffer holding the result.
  *
- *   applyHighlightDesat(buf, count, config)
- *       Baked, in-place, linear-light highlight desaturation (Refinement E),
- *       called from the processor's preprocess() before the ACEScct encode.
- *
  * Buffers are supplied by the caller via `getBuf(key, count)` so we reuse a
  * small pool instead of allocating per frame (Refinement I). The grain tile is
  * uploaded once and cached.
@@ -37,7 +33,6 @@ import caUrl             from '../shaders/chromatic_aberration.wgsl?url';
 import vignetteUrl       from '../shaders/vignette.wgsl?url';
 import highlightsUrl     from '../shaders/highlights.wgsl?url';
 import bloomSmallUrl     from '../shaders/bloom_small.wgsl?url';
-import highlightDesatUrl from '../shaders/highlight_desat.wgsl?url';
 import grainSampleUrl    from '../shaders/grain_sample.wgsl?url';
 import blurUrl           from '../shaders/gaussian_blur.wgsl?url';
 import blendUrl          from '../shaders/blend.wgsl?url';
@@ -76,12 +71,11 @@ export class Effects {
     if (this._ready) return true;
     if (!isAvailable()) return false;
 
-    const [ca, vig, hi, bloomSm, hdesat, gsample, blur, blend, grain, cnr] = await Promise.all([
+    const [ca, vig, hi, bloomSm, gsample, blur, blend, grain, cnr] = await Promise.all([
       loadShaderModule(caUrl),
       loadShaderModule(vignetteUrl),
       loadShaderModule(highlightsUrl),
       loadShaderModule(bloomSmallUrl),
-      loadShaderModule(highlightDesatUrl),
       loadShaderModule(grainSampleUrl),
       loadShaderModule(blurUrl),
       loadShaderModule(blendUrl),
@@ -96,7 +90,6 @@ export class Effects {
       bloomDown:    createComputePipeline(bloomSm,    'main_down',     'fx-bloom-down'),
       bloomMask:    createComputePipeline(bloomSm,    'main_mask',     'fx-bloom-mask'),
       bloomUpadd:   createComputePipeline(bloomSm,    'main_upadd',    'fx-bloom-upadd'),
-      desat:        createComputePipeline(hdesat,     'main',          'fx-highlight-desat'),
       gsample:      createComputePipeline(gsample,    'main',          'fx-grain-sample'),
       blurH:        createComputePipeline(blur,       'main_h',        'fx-blur-h'),
       blurV:        createComputePipeline(blur,       'main_v',        'fx-blur-v'),
@@ -241,19 +234,9 @@ export class Effects {
     u.destroy();
   }
 
-  // ── Baked: highlight desaturation (linear light, in place) ────────────────
-  applyHighlightDesat(buf, count, config) {
-    if (!this._ready || !(config?.enable_highlight_desat)) return;
-    // threshold_L / rolloff are Lab L* (0..100); map roughly to a linear luma.
-    const thr  = (config.highlight_desat_threshold_L ?? 58) / 100;
-    const roll = (config.highlight_desat_rolloff_L ?? 10) / 100;
-    const u = createUniformBuffer(new Float32Array([thr, roll, 0.85, 0]));
-    runCompute(this._pipelines.desat, [
-      { binding: 0, resource: { buffer: buf } },
-      { binding: 1, resource: { buffer: u } },
-    ], dispatchSize(count / 3, 64));
-    u.destroy();
-  }
+  // (applyHighlightDesat removed — upstream v2 dropped the pre-encode highlight
+  //  desaturation pass in favour of raw-domain highlight recovery, and nothing
+  //  called it since. Its shader and pipeline went with it.)
 
   // ── Chroma noise reduction (Lab despike + bilateral on a*/b*) ─────────────
   /**

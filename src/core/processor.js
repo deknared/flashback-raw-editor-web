@@ -169,8 +169,8 @@ export class FlashbackProcessor {
       adjust:      createComputePipeline(adjust,      'main',        'wb-exposure'),
       lut:         createComputePipeline(lut,         'main',        'lut-3d'),
       colormatrix:   createComputePipeline(colormatrix, 'main',      'color-matrix'),
-      tonecurve:     createComputePipeline(tonecurve,   'main',          'tone-curve'),
-      tonecurveSrgb: createComputePipeline(tonecurve,   'main_srgb',     'tone-curve-srgb'),
+      // Only the ProPhoto tone-curve entry point is used (the desktop's no-LUT
+      // display render); the module's `main`/`main_srgb` variants are legacy.
       tonecurveProphoto: createComputePipeline(tonecurve, 'main_prophoto', 'tone-curve-prophoto'),
       postgain:      createComputePipeline(postgain,    'main',      'post-gain'),
       saturation:    createComputePipeline(saturation,  'main',      'saturation'),
@@ -240,23 +240,10 @@ export class FlashbackProcessor {
     this._pool.clear();
   }
 
-  // ── Load: decode a RAW/DNG file → intermediate → first preview ────────────
-
-  /**
-   * Decode a DNG/RAW file and build the ACEScct intermediate, then return a
-   * first preview. The slow step (decode + preprocess) runs once per image.
-   *
-   * @param {ArrayBuffer} buffer
-   * @param {string}      filename
-   * @param {{ fast?: boolean }} [opts]
-   * @returns {Promise<ImageData|null>}
-   */
-  async loadImage(buffer, filename, opts = {}) {
-    if (!this._ready) throw new Error('[processor] loadImage() before init()');
-
-    const decoded = await this._decoder.decode(buffer, opts);
-    return this.loadDecoded(decoded, filename, buffer);
-  }
+  // ── Load: decoded image → intermediate → first preview ────────────────────
+  // (All callers decode via main.js decodeSource() — which routes JPEG/PNG to
+  //  the image decoder and passes the per-photo Auto WB — then hand the result
+  //  to loadDecoded. The old loadImage(buffer) wrapper is gone.)
 
   /**
    * Load an already-decoded image (e.g. from the photo strip's pixel cache —

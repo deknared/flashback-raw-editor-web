@@ -122,10 +122,12 @@ export const LINSRGB_TO_ACESCG = m3inv(ACESCG_TO_LINSRGB);
 
 // NOTE: v1.13.0 removed the v1.12.0 "embedded ForwardMatrix + asn^0.75 residual
 // WB" path (EMBEDDED_FM_TO_ACESCG / ASN_REF / WB_RESIDUAL / ccmForAsn). It was a
-// reverse-engineered approximation that produced a magenta cast. The desktop app
-// (ground truth) applies ONE calibrated transform to every shot: ÷ASN_D50 → FM1
-// → D50→D60 → ACEScg, i.e. exactly RAW_TO_ACESCG above. Flashback decode now uses
-// that directly; do not reintroduce per-shot ASN white balance for this camera.
+// reverse-engineered approximation that produced a magenta cast. The fixed
+// ÷ASN_D50 → FM1 → D50→D60 → ACEScg transform (RAW_TO_ACESCG above) is the
+// calibrated DEFAULT for every shot. Since v1.3.0 the per-photo "Auto WB"
+// effect divides by the file's own AsShotNeutral instead — that's the CLEAN
+// textbook DNG model (same FM1, different neutral), not the old residual hack.
+// Do not reintroduce the ^0.75 residual approach.
 
 /**
  * Render-time base exposure lift in EV — upstream's BASE_EXPOSURE_OFFSET_V2.

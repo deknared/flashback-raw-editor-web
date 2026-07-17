@@ -45,11 +45,8 @@ export default defineConfig({
     },
   },
 
-  server: {
-    // Needed for SharedArrayBuffer (used by some WASM builds)
-    headers: {
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
-    },
-  },
+  // NO COOP/COEP headers — matching production (public/_headers). The libraw
+  // worker runs as a plain Web Worker without SharedArrayBuffer, and setting
+  // them in dev only would hide a dev/prod difference (and COOP breaks iOS
+  // standalone PWA launch in production).
 });

@@ -2834,7 +2834,7 @@ async function runBatch(overrideFormat) {
         const buf = await f.arrayBuffer();
         // Each photo uses ITS OWN vibe + adjustments + rotation + Auto WB. Decode
         // via decodeSource so per-photo Auto WB is honoured AND JPEG/PNG imports
-        // work (loadImage is RAW-only and decodes before WB can be set).
+        // work (a raw decode alone would be RAW-only and ignore the photo's WB).
         const per = state._perImage[i];
         const photoAutoWb = per?.autoWb ?? defaultAutoWb();
         state.autoWb = photoAutoWb;
