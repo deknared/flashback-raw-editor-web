@@ -8,6 +8,11 @@
   // the repo, so it's almost certainly this — if your project is named
   // differently, change this and I'll re-push.
   "name": "flashback-raw-editor-web",
+  // Pin the account that owns the Flashback workers (deknared). Without this,
+  // wrangler deploys to whatever single account the current OAuth token can
+  // see — a token for the wrong account would silently CREATE a stray copy of
+  // the worker there instead of failing. Pinned, it fails loudly instead.
+  "account_id": "34595a907ffe40185061fbfd22054e4c",
   "compatibility_date": "2026-06-13",
   "assets": {
     "directory": "./dist"
